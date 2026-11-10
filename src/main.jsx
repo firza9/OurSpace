@@ -344,6 +344,47 @@ function App() {
   const [recipeLoading, setRecipeLoading] = useState(true);
   const [recipeError, setRecipeError] = useState("");
   const [recipeSaving, setRecipeSaving] = useState(false);
+  const [recipeSearch, setRecipeSearch] = useState("");
+  const [recipeFilter, setRecipeFilter] = useState("All");
+  const [recipeSort, setRecipeSort] = useState("Newest");
+  const [selectedRecipe, setSelectedRecipe] = useState(null);
+  const [recipeComposer, setRecipeComposer] = useState(false);
+  const [recipeFavorites, setRecipeFavorites] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("ourspace-recipe-favorites") || "[]"); }
+    catch { return []; }
+  });
+  useEffect(() => {
+    localStorage.setItem("ourspace-recipe-favorites", JSON.stringify(recipeFavorites));
+  }, [recipeFavorites]);
+  const toggleRecipeFavorite = (id) => setRecipeFavorites((items) =>
+    items.includes(id) ? items.filter((x) => x !== id) : [...items, id]
+  );
+  const recipeCategory = (recipe) => {
+    const t = recipe.name.toLowerCase();
+    if (/ayam|chicken/.test(t)) return "Chicken";
+    if (/daging|beef|steak/.test(t)) return "Beef";
+    if (/ikan|fish|salmon/.test(t)) return "Fish";
+    if (/udang|prawn|shrimp|sotong|seafood/.test(t)) return "Seafood";
+    if (/kek|cake|dessert|puding|biskut/.test(t)) return "Dessert";
+    if (/nasi|rice|mee|noodle|pasta/.test(t)) return "Rice & noodles";
+    return "Others";
+  };
+  const filteredRecipes = recipeItems.filter((r) => {
+    const term = recipeSearch.trim().toLowerCase();
+    const haystack = [r.name, r.source, ...(r.ingredients || []), ...(r.steps || [])].join(" ").toLowerCase();
+    const matches = !term || haystack.includes(term);
+    const filterMatches = recipeFilter === "All" ||
+      (recipeFilter === "Favorites" && recipeFavorites.includes(r.id)) ||
+      (recipeFilter === "With steps" && r.steps.length > 0) ||
+      (recipeFilter === "Saved links" && r.source?.startsWith("http")) ||
+      recipeCategory(r) === recipeFilter;
+    return matches && filterMatches;
+  }).sort((a, b) => {
+    if (recipeSort === "A–Z") return a.name.localeCompare(b.name);
+    if (recipeSort === "Favorites first") return Number(recipeFavorites.includes(b.id)) - Number(recipeFavorites.includes(a.id));
+    return 0;
+  });
+
 
   const loadRecipes = async (homeId) => {
     const { data, error } = await supabase.from("recipes")
@@ -886,6 +927,7 @@ function App() {
       source: "ChatGPT / pasted text",
     });
     if (saved) setDraft("");
+    return saved;
   };
   const list = (key, render) => (
     <div className="stack">
@@ -934,84 +976,95 @@ function App() {
             </div>
           )}
           {tab === "Recipes" && (
-            <>
-              {heading(
-                "Recipe Book",
-                "Paste recipes from ChatGPT, or save TikTok links.",
-              )}
-              <div className="panel">
-                <h3>Paste recipe</h3>
-                <textarea
-                  rows="7"
-                  placeholder={
-                    "Ayam Masak Lemak\nBahan:\n- Ayam 500g\n- Santan 200ml\nCara:\n1. Tumis bahan\n2. Masak hingga siap"
-                  }
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                />
-                {btn("Parse & save recipe", parseRecipe)}
-                <p className="muted">
-                  Text parser works best with Bahan: and Cara: headings. Review
-                  results after importing.
-                </p>
-              </div>
-              <div className="panel">
-                <h3>Save TikTok link</h3>
-                <div className="form">
-                  {field("recipeName", "Recipe name")}
-                  {field("url", "TikTok URL")}
-                  {btn(recipeSaving ? "Saving..." : "Save link", async () => {
-                    if (!form.recipeName?.trim() || !form.url?.trim()) return;
-                    const saved = await saveRecipe({
-                      name: form.recipeName,
-                      source: form.url,
-                      ingredients: [],
-                      steps: [],
-                    });
-                    if (saved) setForm({});
-                  })}
+            <section className="recipe-page">
+              <div className="recipe-hero">
+                <div className="recipe-hero-copy">
+                  <span className="recipe-eyebrow">OUR LITTLE COOKBOOK</span>
+                  <h2>What shall we cook today?</h2>
+                  <p>All our favourite meals, little kitchen discoveries and recipes worth keeping.</p>
+                  <div className="recipe-stats"><span>{recipeItems.length} saved recipes</span><span>{recipeFavorites.length} favourites</span></div>
                 </div>
+                <div className="recipe-hero-art" aria-hidden="true">🍲<span>♡</span></div>
               </div>
-              {recipeLoading && <p className="muted">Loading recipes...</p>}
-              {recipeError && <p className="muted">Recipe error: {recipeError}</p>}
-              {!recipeLoading && !recipeError && list("recipes", (x) => (
-                <>
-                  <b>{x.name}</b>
-                  <small>
-                    {x.source?.startsWith("http") ? (
-                      <a href={x.source} target="_blank">
-                        Open TikTok video
-                      </a>
-                    ) : (
-                      x.source
-                    )}
-                  </small>
-                  {x.ingredients?.length > 0 && (
-                    <details>
-                      <summary>Ingredients ({x.ingredients.length})</summary>
-                      {x.ingredients.map((v, i) => (
-                        <p key={i}>{v}</p>
-                      ))}
-                      <button
-                        onClick={() => {
-                          addRecipeIngredientsToGrocery(x.ingredients);
-                        }}
-                      >
-                        Add ingredients to grocery
+              <div className="recipe-toolbar">
+                <label className="recipe-search">
+                  <span aria-hidden="true">⌕</span>
+                  <input aria-label="Search recipes" placeholder="Search dishes, ingredients, or cooking steps..." value={recipeSearch} onChange={(e) => setRecipeSearch(e.target.value)} />
+                  {recipeSearch && <button type="button" aria-label="Clear search" onClick={() => setRecipeSearch("")}>×</button>}
+                </label>
+                <button className="recipe-add-btn" onClick={() => setRecipeComposer(true)}><Plus size={18}/> Add recipe</button>
+              </div>
+              <div className="recipe-filters" aria-label="Recipe filters">
+                {["All", "Favorites", "Chicken", "Beef", "Fish", "Seafood", "Rice & noodles", "Dessert", "Others", "With steps", "Saved links"].map((filter) =>
+                  <button key={filter} className={recipeFilter === filter ? "selected" : ""} onClick={() => setRecipeFilter(filter)}>
+                    {filter === "Favorites" ? "♡ " : ""}{filter}
+                  </button>
+                )}
+              </div>
+              <div className="recipe-results-head">
+                <div><h3>Recipe collection</h3><p>{filteredRecipes.length} {filteredRecipes.length === 1 ? "recipe" : "recipes"} found</p></div>
+                <select aria-label="Sort recipes" value={recipeSort} onChange={(e) => setRecipeSort(e.target.value)}>
+                  <option>Newest</option><option>A–Z</option><option>Favorites first</option>
+                </select>
+              </div>
+              {recipeLoading && <p className="recipe-empty">Loading your recipes...</p>}
+              {recipeError && <p className="recipe-empty">Couldn't load recipes: {recipeError}</p>}
+              {!recipeLoading && !recipeError && (filteredRecipes.length ? (
+                <div className="recipe-grid">
+                  {filteredRecipes.map((r) => (
+                    <article className="recipe-card" key={r.id}>
+                      <button className="recipe-card-cover" onClick={() => setSelectedRecipe(r)} aria-label={`View ${r.name}`}>
+                        <span className="recipe-food-art" aria-hidden="true">{({Chicken:"🍗",Beef:"🥩",Fish:"🐟",Seafood:"🍤","Rice & noodles":"🍜",Dessert:"🍰",Others:"🍽️"})[recipeCategory(r)]}</span>
+                        <span className="recipe-cover-label">{recipeCategory(r)}</span>
                       </button>
-                    </details>
-                  )}
-                  {x.steps?.length > 0 && (
-                    <details>
-                      <summary>Cooking steps</summary>
-                      {x.steps.map((v, i) => (
-                        <p key={i}>{v}</p>
-                      ))}
-                    </details>
-                  )}
-                </>
+                      <button className={"recipe-heart" + (recipeFavorites.includes(r.id) ? " is-favorite" : "")} title="Toggle favourite" aria-label={`Favorite ${r.name}`} onClick={() => toggleRecipeFavorite(r.id)}>{recipeFavorites.includes(r.id) ? "♥" : "♡"}</button>
+                      <div className="recipe-card-body">
+                        <h4>{r.name}</h4>
+                        <p>{r.ingredients.length ? `${r.ingredients.length} ingredients` : "Saved inspiration"} · {r.steps.length ? `${r.steps.length} steps` : "Video / link"}</p>
+                        <button onClick={() => setSelectedRecipe(r)}>View recipe <span>→</span></button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="recipe-empty"><div>🍵</div><h3>No recipes found</h3><p>Try another keyword or category, or add your first recipe.</p><button onClick={() => {setRecipeSearch("");setRecipeFilter("All");}}>Show all recipes</button></div>
               ))}
-            </>
+              {selectedRecipe && <div className="os-modal-overlay" onClick={() => setSelectedRecipe(null)}>
+                <div className="os-modal recipe-detail-modal" role="dialog" aria-modal="true" aria-label={selectedRecipe.name} onClick={(e) => e.stopPropagation()}>
+                  <div className="recipe-detail-top"><span>{recipeCategory(selectedRecipe)} · Our cookbook</span><button aria-label="Close" onClick={() => setSelectedRecipe(null)}>×</button></div>
+                  <div className="recipe-detail-banner" aria-hidden="true">{({Chicken:"🍗",Beef:"🥩",Fish:"🐟",Seafood:"🍤","Rice & noodles":"🍜",Dessert:"🍰",Others:"🍽️"})[recipeCategory(selectedRecipe)]}</div>
+                  <h2>{selectedRecipe.name}</h2>
+                  <p className="recipe-detail-sub">{selectedRecipe.ingredients.length} ingredients · {selectedRecipe.steps.length} cooking steps</p>
+                  {selectedRecipe.source?.startsWith("http") && <a className="recipe-source-link" href={selectedRecipe.source} target="_blank" rel="noopener noreferrer">Open original video / recipe ↗</a>}
+                  {selectedRecipe.ingredients.length > 0 && <section className="recipe-detail-section"><h3>Ingredients</h3><ul>{selectedRecipe.ingredients.map((item,i) => <li key={i}>{item}</li>)}</ul>
+                    <button className="recipe-grocery-btn" onClick={() => addRecipeIngredientsToGrocery(selectedRecipe.ingredients)}>+ Add ingredients to grocery</button>
+                  </section>}
+                  {selectedRecipe.steps.length > 0 && <section className="recipe-detail-section"><h3>How to make it</h3><ol>{selectedRecipe.steps.map((item,i) => <li key={i}>{item}</li>)}</ol></section>}
+                  {!selectedRecipe.steps.length && !selectedRecipe.ingredients.length && <p className="muted">This recipe is saved as a link. Open the original source for instructions.</p>}
+                  <div className="recipe-detail-actions">
+                    <button onClick={() => toggleRecipeFavorite(selectedRecipe.id)}>{recipeFavorites.includes(selectedRecipe.id) ? "♥ Saved favourite" : "♡ Save favourite"}</button>
+                    <button onClick={() => {if(window.confirm("Delete this recipe?")){deleteRecipe(selectedRecipe.id);setSelectedRecipe(null);}}}>Delete recipe</button>
+                  </div>
+                </div>
+              </div>}
+              {recipeComposer && <div className="os-modal-overlay" onClick={() => setRecipeComposer(false)}>
+                <div className="os-modal recipe-compose-modal" role="dialog" aria-modal="true" aria-label="Add recipe" onClick={(e) => e.stopPropagation()}>
+                  <div className="recipe-detail-top"><strong>Add to our cookbook</strong><button aria-label="Close" onClick={() => setRecipeComposer(false)}>×</button></div>
+                  <h3>Paste a recipe</h3>
+                  <p className="muted">Paste from ChatGPT. Use “Bahan:” and “Cara:” headings so ingredients and steps are organised automatically.</p>
+                  <textarea rows="8" placeholder={"Ayam Masak Lemak\nBahan:\n- Ayam 500g\n- Santan 200ml\nCara:\n1. Tumis bahan\n2. Masak hingga siap"} value={draft} onChange={(e) => setDraft(e.target.value)}/>
+                  <button className="recipe-full-btn" disabled={recipeSaving || !draft.trim()} onClick={async () => {const saved = await parseRecipe(); if(saved) setRecipeComposer(false);}}>Save pasted recipe</button>
+                  <div className="recipe-compose-divider">or save a recipe link</div>
+                  <div className="form">{field("recipeName", "Recipe name")}{field("url", "TikTok or recipe URL")}
+                    <button className="recipe-full-btn" disabled={recipeSaving} onClick={async () => {
+                      if (!form.recipeName?.trim() || !/^https?:\/\//i.test(form.url || "")) {alert("Enter a recipe name and valid URL."); return;}
+                      const saved = await saveRecipe({name:form.recipeName,source:form.url,ingredients:[],steps:[]});
+                      if(saved){setForm({});setRecipeComposer(false);}
+                    }}>{recipeSaving ? "Saving..." : "Save recipe link"}</button>
+                  </div>
+                </div>
+              </div>}
+            </section>
           )}
           {tab === "Grocery" && (
             <>
