@@ -641,13 +641,12 @@ function App() {
     setReminderDraft({ title: item.title, remind_at: local });
   };
 
-  // New mockup features: local-first until Supabase tables/policies are confirmed.
-  const [extra, setExtra] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("ourspace-extras-v1") || "{}"); }
-    catch { return {}; }
-  });
+  // Household-synced mockup features.
+  const [extra, setExtra] = useState({meals:[],wishlist:[],love:[]});
   const [extraModal, setExtraModal] = useState("");
   const [extraDraft, setExtraDraft] = useState({});
+  const [extraBusy, setExtraBusy] = useState(false);
+  const [extraError, setExtraError] = useState("");
   const [calendarEvents, setCalendarEvents] = useState([]);
   const [calendarLoading, setCalendarLoading] = useState(true);
   const [calendarError, setCalendarError] = useState("");
@@ -658,13 +657,86 @@ function App() {
   const [mealWeek, setMealWeek] = useState(0);
   const [wishlistFilter, setWishlistFilter] = useState("All");
   const [loveOpened, setLoveOpened] = useState(null);
-  useEffect(() => localStorage.setItem("ourspace-extras-v1", JSON.stringify(extra)), [extra]);
-  const extraItems = key => extra[key] || [];
-  const saveExtra = (key, data) => {
-    setExtra(v => ({...v, [key]: [{id:uid(), created_at:new Date().toISOString(), ...data}, ...(v[key] || [])]}));
-    setExtraDraft({}); setExtraModal("");
+  const [synced, setSynced] = useState({goals:[],contributions:[],commitments:[],payments:[],cards:[],transactions:[],todos:[]});
+  const [syncError, setSyncError] = useState("");
+  const tableMap = {meals:"meal_plans",wishlist:"wishlist_items",love:"love_notes",goals:"savings_goals",contributions:"savings_contributions",commitments:"commitments",payments:"commitment_payments",cards:"credit_cards",transactions:"credit_transactions",todos:"todos"};
+  const reloadAll = async (homeId) => {
+    const keys = Object.keys(tableMap);
+    const results = await Promise.all(keys.map(k=>supabase.from(tableMap[k]).select("*").eq("household_id",homeId)));
+    const errors = results.map((r,i)=>r.error ? `${tableMap[keys[i]]}: ${r.error.message}` : null).filter(Boolean);
+    setSyncError(errors.join(" | "));
+    setExtra({meals:results[0].data||[],wishlist:results[1].data||[],love:results[2].data||[]});
+    setSynced(Object.fromEntries(keys.slice(3).map((k,i)=>[k,results[i+3].data||[]])));
   };
-  const deleteExtra = (key, id) => setExtra(v => ({...v, [key]:(v[key] || []).filter(x => x.id !== id)}));
+  useEffect(()=>{
+    if(!householdId) return;
+    reloadAll(householdId);
+    const channels=Object.values(tableMap).map(t=>supabase.channel(`ourspace-${t}-${householdId}`)
+      .on("postgres_changes",{event:"*",schema:"public",table:t,filter:`household_id=eq.${householdId}`},()=>reloadAll(householdId)).subscribe());
+    return ()=>channels.forEach(c=>supabase.removeChannel(c));
+  },[householdId]);
+  const mutate = async (key, op, payload, id) => {
+    if(!householdId||!currentUserId) {alert("Household is not ready yet.");return false;}
+    const table=tableMap[key];
+    if(!table) return false;
+    let query;
+    if(op==="insert") query=supabase.from(table).insert({household_id:householdId,...payload});
+    if(op==="update") query=supabase.from(table).update(payload).eq("id",id).eq("household_id",householdId);
+    if(op==="delete") query=supabase.from(table).delete().eq("id",id).eq("household_id",householdId);
+    const {error}=await query;
+    if(error){setSyncError(`${table}: ${error.message}`);alert(`${table}: ${error.message}`);return false;}
+    await reloadAll(householdId);
+    return true;
+  };
+  const extraItems = key => extra[key] || [];
+  const saveExtra = async (key, data) => {
+    if(extraBusy)return;
+    setExtraBusy(true);
+    let payload;
+    if(key==="meals")payload={created_by:currentUserId,title:(data.title||"").trim(),date:data.date,type:data.type||"Dinner"};
+    if(key==="wishlist")payload={created_by:currentUserId,title:(data.title||"").trim(),price:Number(data.price||0),category:data.category||"Home",url:data.url||null};
+    if(key==="love")payload={created_by:currentUserId,note:(data.note||"").trim(),open_date:data.open_date||null};
+    if(!payload || !(payload.title||payload.note) || (key==="meals"&&!payload.date)) {alert("Please fill the required fields.");setExtraBusy(false);return;}
+    const ok=await mutate(key,"insert",payload);
+    setExtraBusy(false);
+    if(ok){setExtraDraft({});setExtraModal("");}
+  };
+  const deleteExtra = async (key,id) => {if(window.confirm("Delete this item?"))await mutate(key,"delete",null,id);};
+  const addSavingsGoal=async()=>{
+    if(!form.name?.trim()||!(Number(form.target)>0))return alert("Enter a goal and target amount.");
+    const ok=await mutate("goals","insert",{created_by:currentUserId,title:form.name.trim(),target_amount:Number(form.target)});
+    if(ok){const initial=Number(form.saved||0);setForm({});if(initial>0)alert("Goal created. Use Add savings to record the starting balance.");}
+  };
+  const addContribution=async(goal)=>{
+    const raw=prompt("Amount to add (RM)");if(raw===null)return;
+    const amount=Number(raw);if(!Number.isFinite(amount)||amount<=0)return alert("Enter a valid amount.");
+    await mutate("contributions","insert",{goal_id:goal.id,contributed_by:currentUserId,amount});
+  };
+  const addCommitment=async()=>{
+    if(!form.name?.trim()||!Number.isFinite(Number(form.amount))||Number(form.amount)<0)return alert("Enter a commitment and amount.");
+    const ok=await mutate("commitments","insert",{created_by:currentUserId,title:form.name.trim(),amount:Number(form.amount),start_date:(form.start||month)+"-01",total_months:Math.max(1,Number(form.months)||12),due_day:Math.max(1,Math.min(31,Number(form.dueDay)||1))});
+    if(ok)setForm({});
+  };
+  const toggleCommitmentMonth=async(c,m,i)=>{
+    const payment=synced.payments.find(p=>p.commitment_id===c.id&&p.installment_number===i+1);
+    if(payment)await mutate("payments","update",{paid_at:payment.paid_at?null:new Date().toISOString(),paid_amount:payment.paid_at?null:Number(c.amount),paid_by:payment.paid_at?null:currentUserId},payment.id);
+    else await mutate("payments","insert",{commitment_id:c.id,installment_number:i+1,due_date:`${m}-${String(Math.min(c.due_day,new Date(Number(m.slice(0,4)),Number(m.slice(5)),0).getDate())).padStart(2,"0")}`,paid_at:new Date().toISOString(),paid_amount:Number(c.amount),paid_by:currentUserId});
+  };
+  const addCard=async()=>{
+    if(!form.cardLabel?.trim())return alert("Enter card name.");
+    const ok=await mutate("cards","insert",{created_by:currentUserId,label:form.cardLabel.trim(),last_four:form.lastFour||null});
+    if(ok)setForm({});
+  };
+  const addTransaction=async()=>{
+    if(!form.name?.trim()||!form.cardId||Number(form.amount)<0||!form.amount)return alert("Choose a card and enter purchase and amount.");
+    const ok=await mutate("transactions","insert",{created_by:currentUserId,card_id:form.cardId,description:form.name.trim(),amount:Number(form.amount),responsibility:form.who==="Personal"?"personal":"shared",responsible_user:form.who==="Personal"?currentUserId:null});
+    if(ok)setForm({});
+  };
+  const addTodo=async()=>{
+    if(!form.name?.trim())return;
+    const ok=await mutate("todos","insert",{created_by:currentUserId,title:form.name.trim(),due_at:form.due?new Date(form.due+"T12:00:00").toISOString():null});
+    if(ok)setForm({});
+  };
   const loadCalendarEvents = async (homeId) => {
     const { data, error } = await supabase.from("calendar_events")
       .select("id, household_id, created_by, title, date, time, category, created_at")
@@ -1068,195 +1140,24 @@ function App() {
               </div>
             </>
           )}
-          {tab === "Savings" && (
-            <>
-              {heading("Savings Goals", "Save for your next milestone.")}
-              <div className="panel form">
-                {field("name", "Goal e.g. Emergency Fund")}
-                {field("target", "Target RM", "number")}
-                {field("saved", "Saved so far RM", "number")}
-                {btn(
-                  "Create goal",
-                  () =>
-                    form.name &&
-                    add("savings", {
-                      name: form.name,
-                      target: Number(form.target || 0),
-                      saved: Number(form.saved || 0),
-                    }),
-                )}
-              </div>
-              {list("savings", (x) => (
-                <>
-                  <b>{x.name}</b>
-                  <small>
-                    {fmt(x.saved)} / {fmt(x.target)}
-                  </small>
-                  <progress value={x.saved} max={Math.max(1, x.target)} />
-                  <div className="form inline">
-                    <button
-                      onClick={() => {
-                        let n = prompt("Amount to add (RM)");
-                        if (n !== null && Number(n) > 0)
-                          update("savings", (a) =>
-                            a.map((y) =>
-                              y.id === x.id
-                                ? { ...y, saved: y.saved + Number(n) }
-                                : y,
-                            ),
-                          );
-                      }}
-                    >
-                      + Add savings
-                    </button>
-                  </div>
-                </>
-              ))}
-            </>
-          )}
-          {tab === "Commitments" && (
-            <>
-              {heading(
-                "Commitments & Loans",
-                "Recurring instalments with paid/unpaid tracking.",
-              )}
-              <div className="panel form">
-                {field("name", "Commitment name")}
-                {field("amount", "Monthly payment RM", "number")}
-                {field("start", "Start month", "month")}
-                {field("months", "Duration (months)", "number")}
-                {field("dueDay", "Due day (1-28)", "number")}
-                {btn(
-                  "Add recurring commitment",
-                  () =>
-                    form.name &&
-                    add("commitments", {
-                      name: form.name,
-                      amount: Number(form.amount || 0),
-                      start: form.start || month,
-                      months: Number(form.months || 12),
-                      dueDay: Number(form.dueDay || 1),
-                      paid: {},
-                    }),
-                )}
-              </div>
-              <div className="panel">
-                <label>
-                  View month{" "}
-                  <input
-                    type="month"
-                    value={month}
-                    onChange={(e) => setMonth(e.target.value)}
-                  />
-                </label>
-              </div>
-              {db.commitments.map((c) => (
-                <div className="panel" key={c.id}>
-                  <h3>
-                    {c.name} <span className="amount">{fmt(c.amount)}/mo</span>
-                  </h3>
-                  <p className="muted">
-                    {c.months} instalments · Due day {c.dueDay} ·{" "}
-                    {Object.values(c.paid || {}).filter(Boolean).length} marked
-                    paid
-                  </p>
-                  <div className="monthlist">
-                    {monthsOf(c.start, c.months).map((m, i) => (
-                      <label key={m} className="month">
-                        <input
-                          type="checkbox"
-                          checked={!!c.paid?.[m]}
-                          onChange={() => togglePaid(c.id, m)}
-                        />
-                        <span>
-                          {i + 1}. {m}
-                        </span>
-                        <b>{c.paid?.[m] ? "Paid" : "Unpaid"}</b>
-                      </label>
-                    ))}
-                  </div>
-                  {c.id !== "car" && (
-                    <button
-                      className="danger"
-                      onClick={() => del("commitments", c.id)}
-                    >
-                      Delete commitment
-                    </button>
-                  )}
-                </div>
-              ))}
-            </>
-          )}
-          {tab === "Shared CC" && (
-            <>
-              {heading(
-                "Shared Credit Card",
-                "Log purchases by owner, not bank-connected yet.",
-              )}
-              <div className="panel form">
-                {field("name", "Transaction / purchase")}
-                {field("amount", "Amount RM", "number")}
-                <select
-                  value={form.who || "Shared"}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, who: e.target.value }))
-                  }
-                >
-                  <option>Shared</option>
-                  <option>Nana</option>
-                  <option>Husband</option>
-                </select>
-                {btn(
-                  "Add CC transaction",
-                  () =>
-                    form.name &&
-                    add("cards", {
-                      name: form.name,
-                      amount: Number(form.amount || 0),
-                      who: form.who || "Shared",
-                      paid: false,
-                    }),
-                )}
-              </div>
-              <div className="tiles">
-                {["Nana", "Husband", "Shared"].map((w) =>
-                  tile(
-                    w,
-                    fmt(
-                      db.cards
-                        .filter((x) => x.who === w)
-                        .reduce((a, x) => a + Number(x.amount), 0),
-                    ),
-                    "Tracked transactions",
-                  ),
-                )}
-              </div>
-              {list("cards", (x) => (
-                <>
-                  <label className="check">
-                    <input
-                      type="checkbox"
-                      checked={!!x.paid}
-                      onChange={() =>
-                        update("cards", (a) =>
-                          a.map((y) =>
-                            y.id === x.id ? { ...y, paid: !y.paid } : y,
-                          ),
-                        )
-                      }
-                    />
-                    <span>
-                      {x.name}
-                      <small>
-                        {x.who} · {x.paid ? "Settled" : "Unsettled"}
-                      </small>
-                    </span>
-                    <b>{fmt(x.amount)}</b>
-                  </label>
-                </>
-              ))}
-            </>
-          )}
+          {tab === "Savings" && <>
+            {heading("Savings Goals","Our shared milestones, synced on every device.")}
+            <div className="panel form">{field("name","Goal name")}{field("target","Target RM","number")}<button onClick={addSavingsGoal}>Create goal</button></div>
+            {synced.goals.map(g=>{const saved=synced.contributions.filter(x=>x.goal_id===g.id).reduce((a,x)=>a+Number(x.amount),0);return <div className="panel" key={g.id}><h3>{g.title}</h3><p>{fmt(saved)} / {fmt(g.target_amount)}</p><progress value={saved} max={Math.max(1,Number(g.target_amount))}/><div className="form inline"><button onClick={()=>addContribution(g)}>+ Add savings</button><button className="ghost" onClick={()=>mutate("goals","delete",null,g.id)}>Delete</button></div></div>})}
+            {!synced.goals.length&&<p className="muted">No savings goals yet.</p>}
+          </>}
+          {tab === "Commitments" && <>
+            {heading("Commitments & Loans","Track monthly instalments together.")}
+            <div className="panel form">{field("name","Commitment name")}{field("amount","Monthly payment RM","number")}{field("start","Start month","month")}{field("months","Duration in months","number")}{field("dueDay","Due day (1-31)","number")}<button onClick={addCommitment}>Add commitment</button></div>
+            {synced.commitments.map(c=><div className="panel" key={c.id}><h3>{c.title} <span className="amount">{fmt(c.amount)}/mo</span></h3><p className="muted">Due day {c.due_day} · {c.total_months||12} instalments</p><div className="monthlist">{monthsOf(c.start_date.slice(0,7),Math.min(c.total_months||12,240)).map((m,i)=>{const paid=!!synced.payments.find(p=>p.commitment_id===c.id&&p.installment_number===i+1&&p.paid_at);return <label key={m} className="month"><input type="checkbox" checked={paid} onChange={()=>toggleCommitmentMonth(c,m,i)}/><span>{i+1}. {m}</span><b>{paid?"Paid":"Unpaid"}</b></label>})}</div><button className="ghost" onClick={()=>mutate("commitments","delete",null,c.id)}>Delete commitment</button></div>)}
+            {!synced.commitments.length&&<p className="muted">No commitments yet. Add existing loans here once.</p>}
+          </>}
+          {tab === "Shared CC" && <>
+            {heading("Shared Credit Card","Manual tracking, not connected to the bank.")}
+            <div className="panel form">{field("cardLabel","Card name (e.g. UOB)")}{field("lastFour","Last four digits (optional)")}<button onClick={addCard}>Add card</button></div>
+            <div className="panel form">{field("name","Purchase description")}{field("amount","Amount RM","number")}<select value={form.cardId||""} onChange={e=>setForm(v=>({...v,cardId:e.target.value}))}><option value="">Select card</option>{synced.cards.map(c=><option key={c.id} value={c.id}>{c.label} {c.last_four?`•••• ${c.last_four}`:""}</option>)}</select><select value={form.who||"Shared"} onChange={e=>setForm(v=>({...v,who:e.target.value}))}><option>Shared</option><option>Personal</option></select><button onClick={addTransaction}>Add transaction</button></div>
+            {synced.cards.map(c=><div className="panel" key={c.id}><h3>{c.label} {c.last_four?`•••• ${c.last_four}`:""}</h3><p className="muted">Total recorded: {fmt(synced.transactions.filter(t=>t.card_id===c.id).reduce((n,t)=>n+Number(t.amount),0))}</p>{synced.transactions.filter(t=>t.card_id===c.id).map(t=><div className="item" key={t.id}><div className="grow"><b>{t.description} · {fmt(t.amount)}</b><small>{t.transaction_date} · {t.responsibility}</small></div><button className="ghost" onClick={()=>mutate("transactions","delete",null,t.id)}><Trash2 size={16}/></button></div>)}<button className="ghost" onClick={()=>{if(window.confirm("Delete this card and all its transactions?"))mutate("cards","delete",null,c.id);}}>Delete card</button></div>)}
+          </>}
           {tab === "OurChat" && (
             <>
               {heading("OurChat ♡", "A little corner for the two of you.")}
@@ -1437,7 +1338,7 @@ function App() {
           {tab === "OurWishlist" && <div className="os-feature">
             <div className="os-page-heading"><Gift/><h2>OurWishlist ♡</h2></div>
             <div className="os-pills">{['All','Home','Travel','Gift'].map(x=><button key={x} className={wishlistFilter===x?'selected':''} onClick={()=>setWishlistFilter(x)}>{x}</button>)}</div>
-            <div className="os-list">{extraItems('wishlist').filter(x=>wishlistFilter==='All'||x.category===wishlistFilter).map(x=><div className="os-list-card" key={x.id}><div className="os-wish-icon">{x.category==='Travel'?'✈️':x.category==='Gift'?'🎁':'🛋️'}</div><div><b>{x.title}</b><small>{fmt(x.price)} · {x.category||'Home'}</small>{x.url&&<a href={x.url} target="_blank" rel="noreferrer">View link</a>}</div><button className="ghost" onClick={()=>deleteExtra('wishlist',x.id)}><Trash2 size={17}/></button></div>)}{!extraItems('wishlist').some(x=>wishlistFilter==='All'||x.category===wishlistFilter)&&<p className="muted">Your wishlist is waiting ♡</p>}</div>
+            <div className="os-list">{extraItems('wishlist').filter(x=>wishlistFilter==='All'||x.category===wishlistFilter).map(x=><div className="os-list-card" key={x.id}><div className="os-wish-icon">{x.category==='Travel'?'✈️':x.category==='Gift'?'🎁':'🛋️'}</div><div><b>{x.title}</b><small>{fmt(x.price)} · {x.category||'Home'}</small>{x.url&&/^https?:\/\//i.test(x.url)&&<a href={x.url} target="_blank" rel="noreferrer">View link</a>}</div><button className="ghost" onClick={()=>deleteExtra('wishlist',x.id)}><Trash2 size={17}/></button></div>)}{!extraItems('wishlist').some(x=>wishlistFilter==='All'||x.category===wishlistFilter)&&<p className="muted">Your wishlist is waiting ♡</p>}</div>
             <button className="os-primary-wide" onClick={()=>openExtra('wish')}>+ Add to Wishlist</button><div className="os-cats-footer">🐈 🛒 ♡ 🐱</div>
           </div>}
           {tab === "Love Jar" && <div className="os-feature os-love">
@@ -1449,65 +1350,20 @@ function App() {
             {extraItems('love').slice(0,4).map(x=><div className="os-list-card" key={x.id}><Heart size={18}/><div><b>{x.open_date&&x.open_date>new Date().toISOString().slice(0,10)?'Sealed until '+x.open_date:x.note}</b><small>{new Date(x.created_at).toLocaleDateString('en-MY')}</small></div><button className="ghost" onClick={()=>deleteExtra('love',x.id)}><Trash2 size={16}/></button></div>)}
             {loveOpened&&<div className="os-modal-overlay" onClick={()=>setLoveOpened(null)}><div className="os-modal" onClick={e=>e.stopPropagation()}><h2>♡ A note for you</h2><p>{loveOpened.note}</p><button className="os-primary-wide" onClick={()=>setLoveOpened(null)}>Done ♡</button></div></div>}
           </div>}
-          {tab === "To-do" && (
-            <>
-              {heading("Shared To-do", "A little less to remember.")}
-              <div className="panel form">
-                {field("name", "New task")}
-                {field("due", "Due date", "date")}
-                <select
-                  value={form.owner || "Both"}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, owner: e.target.value }))
-                  }
-                >
-                  <option>Both</option>
-                  <option>Nana</option>
-                  <option>Husband</option>
-                </select>
-                {btn(
-                  "Add task",
-                  () =>
-                    form.name &&
-                    add("tasks", {
-                      name: form.name,
-                      due: form.due,
-                      owner: form.owner || "Both",
-                      done: false,
-                    }),
-                )}
-              </div>
-              {list("tasks", (x) => (
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={!!x.done}
-                    onChange={() =>
-                      update("tasks", (a) =>
-                        a.map((y) =>
-                          y.id === x.id ? { ...y, done: !y.done } : y,
-                        ),
-                      )
-                    }
-                  />
-                  <span className={x.done ? "done" : ""}>
-                    {x.name}
-                    <small>
-                      {x.owner} {x.due ? "· " + x.due : ""}
-                    </small>
-                  </span>
-                </label>
-              ))}
-            </>
-          )}
-          {extraModal && <div className="os-modal-overlay" onClick={()=>setExtraModal('')}><div className="os-modal" onClick={e=>e.stopPropagation()}><div className="os-modal-title"><h2>{extraModal==='event'?(editingCalendarId?'♡ Edit Event':'♡ Add Event'):extraModal==='meal'?'🍽 Add Meal':extraModal==='wish'?'🎁 Add to Wishlist':'♡ Add a Love Note'}</h2><button className="ghost" onClick={()=>setExtraModal('')}><X/></button></div><form onSubmit={async e=>{e.preventDefault();if(extraModal==='event')await saveCalendarEvent();if(extraModal==='meal')saveExtra('meals',extraDraft);if(extraModal==='wish')saveExtra('wishlist',extraDraft);if(extraModal==='love')saveExtra('love',extraDraft);}}>
+          {tab === "To-do" && <>
+            {heading("Shared To-do","A little less to remember.")}
+            <div className="panel form">{field("name","New task")}{field("due","Due date","date")}<button onClick={addTodo}>Add task</button></div>
+            <div className="stack">{synced.todos.map(t=><div className="item" key={t.id}><label className="check grow"><input type="checkbox" checked={!!t.completed} onChange={()=>mutate("todos","update",{completed:!t.completed},t.id)}/><span className={t.completed?"done":""}>{t.title}<small>{t.due_at?new Date(t.due_at).toLocaleDateString("en-MY"):"No due date"}</small></span></label><button className="ghost" onClick={()=>mutate("todos","delete",null,t.id)}><Trash2 size={16}/></button></div>)}{!synced.todos.length&&<p className="muted">No tasks yet.</p>}</div>
+          </>}
+          {syncError && <p className="muted" role="alert">Supabase sync: {syncError}</p>}
+          {extraModal && <div className="os-modal-overlay" onClick={()=>setExtraModal('')}><div className="os-modal" onClick={e=>e.stopPropagation()}><div className="os-modal-title"><h2>{extraModal==='event'?(editingCalendarId?'♡ Edit Event':'♡ Add Event'):extraModal==='meal'?'🍽 Add Meal':extraModal==='wish'?'🎁 Add to Wishlist':'♡ Add a Love Note'}</h2><button className="ghost" onClick={()=>setExtraModal('')}><X/></button></div><form onSubmit={async e=>{e.preventDefault();if(extraModal==='event')await saveCalendarEvent();if(extraModal==='meal')await saveExtra('meals',extraDraft);if(extraModal==='wish')await saveExtra('wishlist',extraDraft);if(extraModal==='love')await saveExtra('love',extraDraft);}}>
             {extraModal==='event'&&<>{extraField('title','Event title')}{extraField('date','Date','date')}{extraField('time','Time','time')}<label className="os-field"><span>Category</span><select value={extraDraft.category||'Date'} onChange={e=>setExtraDraft(v=>({...v,category:e.target.value}))}>{['Date','Appointment','Birthday','Others'].map(x=><option key={x}>{x}</option>)}</select></label></>}
             {extraModal==='meal'&&<>{extraField('title','Meal name')}{extraField('date','Date','date')}<label className="os-field"><span>Meal type</span><select value={extraDraft.type||'Dinner'} onChange={e=>setExtraDraft(v=>({...v,type:e.target.value}))}>{['Breakfast','Lunch','Dinner'].map(x=><option key={x}>{x}</option>)}</select></label></>}
             {extraModal==='wish'&&<>{extraField('title','Item name')}{extraField('price','Price (RM)','number')}<label className="os-field"><span>Category</span><select value={extraDraft.category||'Home'} onChange={e=>setExtraDraft(v=>({...v,category:e.target.value}))}>{['Home','Travel','Gift'].map(x=><option key={x}>{x}</option>)}</select></label>{extraField('url','Link (optional)','url')}</>}
             {extraModal==='love'&&<><label className="os-field"><span>Your note</span><textarea required maxLength={500} value={extraDraft.note||''} onChange={e=>setExtraDraft(v=>({...v,note:e.target.value}))} placeholder="Thank you for always being there for me. ♡"/></label>{extraField('open_date','Open on a specific date (optional)','date')}</>}
-            <div className="os-modal-actions"><button type="button" className="os-cancel" onClick={()=>setExtraModal('')}>Cancel</button><button type="submit" disabled={calendarSaving}>{calendarSaving && extraModal==='event' ? "Saving..." : "Save ♡"}</button></div></form></div></div>}
+            <div className="os-modal-actions"><button type="button" className="os-cancel" onClick={()=>setExtraModal('')}>Cancel</button><button type="submit" disabled={calendarSaving||extraBusy}>{(calendarSaving||extraBusy) ? "Saving..." : "Save ♡"}</button></div></form></div></div>}
           <footer>
-            OurSpace v0.7 · Calendar, Chat, Grocery, Recipes, Reminders, Expenses & Receipts on Supabase
+            OurSpace v0.8 · Household features synced with Supabase
           </footer>
         </div>
         <div className="os-bottom-nav">{[["Dashboard",House,"Home"],["OurChat",MessageCircle,"Chat"],["Meal Planner",Plus,"Plan"],["Reminders",Bell,"Alerts"],["Love Jar",Heart,"Love"]].map(([name,Icon,label])=><button key={name} className={tab===name?'active':''} onClick={()=>goTab(name)}><Icon size={21}/><span>{label}</span></button>)}</div>
