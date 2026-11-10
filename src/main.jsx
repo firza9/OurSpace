@@ -648,6 +648,11 @@ function App() {
   });
   const [extraModal, setExtraModal] = useState("");
   const [extraDraft, setExtraDraft] = useState({});
+  const [calendarEvents, setCalendarEvents] = useState([]);
+  const [calendarLoading, setCalendarLoading] = useState(true);
+  const [calendarError, setCalendarError] = useState("");
+  const [calendarSaving, setCalendarSaving] = useState(false);
+  const [editingCalendarId, setEditingCalendarId] = useState(null);
   const [calendarDate, setCalendarDate] = useState(() => new Date().toISOString().slice(0,10));
   const [calendarMonth, setCalendarMonth] = useState(() => new Date().toISOString().slice(0,7));
   const [mealWeek, setMealWeek] = useState(0);
@@ -660,6 +665,50 @@ function App() {
     setExtraDraft({}); setExtraModal("");
   };
   const deleteExtra = (key, id) => setExtra(v => ({...v, [key]:(v[key] || []).filter(x => x.id !== id)}));
+  const loadCalendarEvents = async (homeId) => {
+    const { data, error } = await supabase.from("calendar_events")
+      .select("id, household_id, created_by, title, date, time, category, created_at")
+      .eq("household_id", homeId).order("date", { ascending: true });
+    if (error) setCalendarError(error.message);
+    else { setCalendarEvents(data || []); setCalendarError(""); }
+    setCalendarLoading(false);
+  };
+  useEffect(() => {
+    if (!householdId) { setCalendarEvents([]); setCalendarLoading(false); return; }
+    setCalendarLoading(true);
+    loadCalendarEvents(householdId);
+    const channel = supabase.channel(`calendar-events-${householdId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "calendar_events", filter: `household_id=eq.${householdId}` },
+        () => loadCalendarEvents(householdId)).subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [householdId]);
+  const openCalendarEditor = (event = null) => {
+    setEditingCalendarId(event?.id || null);
+    setExtraDraft(event ? {title:event.title,date:event.date,time:event.time || "",category:event.category || "Date"} : {date:calendarDate,category:"Date"});
+    setExtraModal("event");
+  };
+  const saveCalendarEvent = async () => {
+    const title = (extraDraft.title || "").trim();
+    const date = extraDraft.date || calendarDate;
+    if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { alert("Enter event title and date."); return; }
+    if (!householdId || !currentUserId || calendarSaving) return;
+    setCalendarSaving(true);
+    const payload = { title, date, time: extraDraft.time || null, category: extraDraft.category || "Date" };
+    const {error} = editingCalendarId
+      ? await supabase.from("calendar_events").update(payload).eq("id",editingCalendarId).eq("household_id",householdId)
+      : await supabase.from("calendar_events").insert({...payload, household_id:householdId, created_by:currentUserId});
+    setCalendarSaving(false);
+    if (error) { setCalendarError(error.message); alert("Calendar error: " + error.message); return; }
+    setExtraModal(""); setExtraDraft({}); setEditingCalendarId(null);
+    await loadCalendarEvents(householdId);
+  };
+  const deleteCalendarEvent = async (id) => {
+    if (!window.confirm("Delete this event?")) return;
+    const {error} = await supabase.from("calendar_events").delete().eq("id",id).eq("household_id",householdId);
+    if (error) { alert("Calendar error: " + error.message); return; }
+    await loadCalendarEvents(householdId);
+  };
+  const calendarRemindersForDate = date => reminders.filter(r => r.remind_at && new Date(r.remind_at).toLocaleDateString("en-CA") === date);
   const extraField = (key, label, type="text") => <label className="os-field"><span>{label}</span><input type={type} value={extraDraft[key] || ""} onChange={e=>setExtraDraft(v=>({...v,[key]:e.target.value}))} /></label>;
   const openExtra = type => {setExtraDraft({});setExtraModal(type);};
   const goTab = name => {setTab(name);setMenu(false);setForm({});};
@@ -1367,9 +1416,15 @@ function App() {
           {tab === "OurCalendar" && <div className="os-feature">
             <div className="os-page-heading"><CalendarDays/><h2>OurCalendar ♡</h2></div>
             <div className="os-month-nav"><button className="ghost" onClick={()=>shiftCalendar(-1)}>‹</button><b>{monthTitle}</b><button className="ghost" onClick={()=>shiftCalendar(1)}>›</button></div>
-            <div className="os-calendar">{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(x=><div className="os-weekday" key={x}>{x}</div>)}{Array.from({length:(new Date(calendarMonth+"-01T12:00:00").getDay()+6)%7},(_,i)=><div key={'blank'+i}/>)}{Array.from({length:new Date(Number(calendarMonth.slice(0,4)),Number(calendarMonth.slice(5)),0).getDate()},(_,i)=>{const day=calendarMonth+"-"+String(i+1).padStart(2,"0");return <button key={day} className={'os-day '+(calendarDate===day?'selected':'')} onClick={()=>setCalendarDate(day)}>{i+1}{extraItems('events').some(x=>x.date===day)&&<i/>}</button>})}</div>
-            <div className="os-section-row"><h3>{new Date(calendarDate+"T12:00:00").toLocaleDateString('en-MY',{weekday:'long',day:'numeric',month:'short',year:'numeric'})}</h3><button onClick={()=>openExtra('event')}>+ Add Event</button></div>
-            <div className="os-list">{extraItems('events').filter(x=>x.date===calendarDate).map(x=><div className="os-list-card" key={x.id}><CalendarDays/><div><b>{x.title}</b><small>{x.category||'Event'} · {x.time||'All day'}</small></div><button className="ghost" onClick={()=>deleteExtra('events',x.id)}><Trash2 size={17}/></button></div>)}{!extraItems('events').some(x=>x.date===calendarDate)&&<p className="muted">No events yet for this day ♡</p>}</div>
+            <div className="os-calendar">{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(x=><div className="os-weekday" key={x}>{x}</div>)}{Array.from({length:(new Date(calendarMonth+"-01T12:00:00").getDay()+6)%7},(_,i)=><div key={'blank'+i}/>)}{Array.from({length:new Date(Number(calendarMonth.slice(0,4)),Number(calendarMonth.slice(5)),0).getDate()},(_,i)=>{const day=calendarMonth+"-"+String(i+1).padStart(2,"0");return <button key={day} className={'os-day '+(calendarDate===day?'selected':'')} onClick={()=>setCalendarDate(day)}>{i+1}{(calendarEvents.some(x=>x.date===day)||calendarRemindersForDate(day).length>0)&&<i/>}</button>})}</div>
+            <div className="os-section-row"><h3>{new Date(calendarDate+"T12:00:00").toLocaleDateString('en-MY',{weekday:'long',day:'numeric',month:'short',year:'numeric'})}</h3><button onClick={()=>openCalendarEditor()}>+ Add Event</button></div>
+            {calendarError && <p className="muted" role="alert">Calendar: {calendarError}. Run the included calendar SQL setup if this table is not created yet.</p>}
+            {calendarLoading && <p className="muted">Loading events...</p>}
+            <div className="os-list">
+              {calendarEvents.filter(x=>x.date===calendarDate).map(x=><div className="os-list-card" key={x.id}><CalendarDays/><div><b>{x.title}</b><small>{x.category||'Event'} · {x.time ? x.time.slice(0,5) : 'All day'}</small></div><button className="ghost" title="Edit event" onClick={()=>openCalendarEditor(x)}>Edit</button><button className="ghost" title="Delete event" onClick={()=>deleteCalendarEvent(x.id)}><Trash2 size={17}/></button></div>)}
+              {calendarRemindersForDate(calendarDate).map(x=><div className="os-list-card" key={'reminder-'+x.id}><Bell/><div><b>{x.title}</b><small>Reminder · {new Date(x.remind_at).toLocaleTimeString('en-MY',{hour:'2-digit',minute:'2-digit'})}{x.completed?' · Completed':''}</small></div><button className="ghost" onClick={()=>goTab('Reminders')}>View</button></div>)}
+              {!calendarLoading && !calendarEvents.some(x=>x.date===calendarDate) && !calendarRemindersForDate(calendarDate).length && <p className="muted">No events yet for this day ♡</p>}
+            </div>
             <div className="os-cats-footer">🐱 ♡ 🐈</div>
           </div>}
           {tab === "Meal Planner" && <div className="os-feature">
@@ -1389,7 +1444,7 @@ function App() {
             <div className="os-page-heading"><Heart/><h2>Love Jar ♡</h2></div><p>A little jar of love, notes and appreciation for each other ♡</p>
             <div className="os-jar-art"><div className="os-jar-lid"/><div className="os-jar-body"><span>♡</span><div>💌 💌 💌</div></div><div className="os-jar-cats">🐱　🐈</div></div>
             <button className="os-primary-wide" onClick={()=>{const visible=extraItems('love').filter(x=>!x.open_date||x.open_date<=new Date().toISOString().slice(0,10));if(!visible.length){alert('No notes ready to open yet ♡');return;}setLoveOpened(visible[Math.floor(Math.random()*visible.length)]);}}>Open a Note ♡</button>
-            <div className="os-love-actions"><button onClick={()=>openExtra('love')}><span>✎</span>Add a Note</button><button onClick={()=>{openExtra('event');setExtraDraft({category:'Date'});}}><span>♡</span>Surprise Date</button></div>
+            <div className="os-love-actions"><button onClick={()=>openExtra('love')}><span>✎</span>Add a Note</button><button onClick={()=>{openCalendarEditor();setExtraDraft({date:calendarDate,category:'Date'});}}><span>♡</span>Surprise Date</button></div>
             <div className="os-section-row"><h3>Recent Notes ♡</h3><small>{extraItems('love').length} notes</small></div>
             {extraItems('love').slice(0,4).map(x=><div className="os-list-card" key={x.id}><Heart size={18}/><div><b>{x.open_date&&x.open_date>new Date().toISOString().slice(0,10)?'Sealed until '+x.open_date:x.note}</b><small>{new Date(x.created_at).toLocaleDateString('en-MY')}</small></div><button className="ghost" onClick={()=>deleteExtra('love',x.id)}><Trash2 size={16}/></button></div>)}
             {loveOpened&&<div className="os-modal-overlay" onClick={()=>setLoveOpened(null)}><div className="os-modal" onClick={e=>e.stopPropagation()}><h2>♡ A note for you</h2><p>{loveOpened.note}</p><button className="os-primary-wide" onClick={()=>setLoveOpened(null)}>Done ♡</button></div></div>}
@@ -1445,14 +1500,14 @@ function App() {
               ))}
             </>
           )}
-          {extraModal && <div className="os-modal-overlay" onClick={()=>setExtraModal('')}><div className="os-modal" onClick={e=>e.stopPropagation()}><div className="os-modal-title"><h2>{extraModal==='event'?'♡ Add Event':extraModal==='meal'?'🍽 Add Meal':extraModal==='wish'?'🎁 Add to Wishlist':'♡ Add a Love Note'}</h2><button className="ghost" onClick={()=>setExtraModal('')}><X/></button></div><form onSubmit={e=>{e.preventDefault();if(extraModal==='event')saveExtra('events',{...extraDraft,date:extraDraft.date||calendarDate});if(extraModal==='meal')saveExtra('meals',extraDraft);if(extraModal==='wish')saveExtra('wishlist',extraDraft);if(extraModal==='love')saveExtra('love',extraDraft);}}>
+          {extraModal && <div className="os-modal-overlay" onClick={()=>setExtraModal('')}><div className="os-modal" onClick={e=>e.stopPropagation()}><div className="os-modal-title"><h2>{extraModal==='event'?(editingCalendarId?'♡ Edit Event':'♡ Add Event'):extraModal==='meal'?'🍽 Add Meal':extraModal==='wish'?'🎁 Add to Wishlist':'♡ Add a Love Note'}</h2><button className="ghost" onClick={()=>setExtraModal('')}><X/></button></div><form onSubmit={async e=>{e.preventDefault();if(extraModal==='event')await saveCalendarEvent();if(extraModal==='meal')saveExtra('meals',extraDraft);if(extraModal==='wish')saveExtra('wishlist',extraDraft);if(extraModal==='love')saveExtra('love',extraDraft);}}>
             {extraModal==='event'&&<>{extraField('title','Event title')}{extraField('date','Date','date')}{extraField('time','Time','time')}<label className="os-field"><span>Category</span><select value={extraDraft.category||'Date'} onChange={e=>setExtraDraft(v=>({...v,category:e.target.value}))}>{['Date','Appointment','Birthday','Others'].map(x=><option key={x}>{x}</option>)}</select></label></>}
             {extraModal==='meal'&&<>{extraField('title','Meal name')}{extraField('date','Date','date')}<label className="os-field"><span>Meal type</span><select value={extraDraft.type||'Dinner'} onChange={e=>setExtraDraft(v=>({...v,type:e.target.value}))}>{['Breakfast','Lunch','Dinner'].map(x=><option key={x}>{x}</option>)}</select></label></>}
             {extraModal==='wish'&&<>{extraField('title','Item name')}{extraField('price','Price (RM)','number')}<label className="os-field"><span>Category</span><select value={extraDraft.category||'Home'} onChange={e=>setExtraDraft(v=>({...v,category:e.target.value}))}>{['Home','Travel','Gift'].map(x=><option key={x}>{x}</option>)}</select></label>{extraField('url','Link (optional)','url')}</>}
             {extraModal==='love'&&<><label className="os-field"><span>Your note</span><textarea required maxLength={500} value={extraDraft.note||''} onChange={e=>setExtraDraft(v=>({...v,note:e.target.value}))} placeholder="Thank you for always being there for me. ♡"/></label>{extraField('open_date','Open on a specific date (optional)','date')}</>}
-            <div className="os-modal-actions"><button type="button" className="os-cancel" onClick={()=>setExtraModal('')}>Cancel</button><button type="submit">Save ♡</button></div></form></div></div>}
+            <div className="os-modal-actions"><button type="button" className="os-cancel" onClick={()=>setExtraModal('')}>Cancel</button><button type="submit" disabled={calendarSaving}>{calendarSaving && extraModal==='event' ? "Saving..." : "Save ♡"}</button></div></form></div></div>}
           <footer>
-            OurSpace v0.6 · Chat, Grocery, Recipes, Reminders & Expenses on Supabase · Other features stored locally
+            OurSpace v0.7 · Calendar, Chat, Grocery, Recipes, Reminders, Expenses & Receipts on Supabase
           </footer>
         </div>
         <div className="os-bottom-nav">{[["Dashboard",House,"Home"],["OurChat",MessageCircle,"Chat"],["Meal Planner",Plus,"Plan"],["Reminders",Bell,"Alerts"],["Love Jar",Heart,"Love"]].map(([name,Icon,label])=><button key={name} className={tab===name?'active':''} onClick={()=>goTab(name)}><Icon size={21}/><span>{label}</span></button>)}</div>
