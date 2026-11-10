@@ -92,6 +92,57 @@ function App() {
       return seed;
     }
   });
+  const [pushState, setPushState] = useState("checking");
+  const [pushError, setPushError] = useState("");
+  const pushSupported = typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+  const urlBase64ToUint8Array = (base64String) => {
+    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+    const raw = atob((base64String + padding).replace(/-/g, "+").replace(/_/g, "/"));
+    return Uint8Array.from(raw, (char) => char.charCodeAt(0));
+  };
+  useEffect(() => {
+    if (!pushSupported) { setPushState("unsupported"); return; }
+    let live = true;
+    navigator.serviceWorker.register("/sw.js").then(async (registration) => {
+      const existing = await registration.pushManager.getSubscription();
+      if (live) setPushState(existing ? "enabled" : Notification.permission === "denied" ? "blocked" : "ready");
+    }).catch((error) => { if (live) {setPushError(error.message);setPushState("error");} });
+    return () => {live = false;};
+  }, []);
+  const enablePush = async () => {
+    if (!pushSupported) {setPushError("Install OurSpace from Safari Add to Home Screen on iPhone (iOS 16.4+).");return;}
+    if (!vapidPublicKey) {setPushError("VITE_VAPID_PUBLIC_KEY is missing from your build environment.");return;}
+    if (!householdId || !currentUserId) {setPushError("Log in and join a household first.");return;}
+    setPushState("saving");setPushError("");
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {setPushState(permission === "denied" ? "blocked" : "ready");return;}
+      const registration = await navigator.serviceWorker.ready;
+      let subscription = await registration.pushManager.getSubscription();
+      if (!subscription) subscription = await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(vapidPublicKey)});
+      const json = subscription.toJSON();
+      const {error} = await supabase.from("push_subscriptions").upsert({
+        endpoint:subscription.endpoint,user_id:currentUserId,household_id:householdId,
+        p256dh:json.keys.p256dh,auth:json.keys.auth,user_agent:navigator.userAgent
+      },{onConflict:"endpoint"});
+      if (error) throw error;
+      setPushState("enabled");
+    } catch(error) {setPushError(error.message);setPushState("error");}
+  };
+  const disablePush = async () => {
+    setPushError("");
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        const {error} = await supabase.from("push_subscriptions").delete().eq("endpoint",sub.endpoint);
+        if (error) throw error;
+        await sub.unsubscribe();
+      }
+      setPushState("ready");
+    } catch(error) {setPushError(error.message);}
+  };
   const [householdId, setHouseholdId] = useState(null);
   const [currentUserId, setCurrentUserId] = useState(null);
   const [chatMessages, setChatMessages] = useState([]);
@@ -972,6 +1023,10 @@ function App() {
                 ["Savings",PiggyBank],["Commitments",ListTodo],["Shared CC",CreditCard],
                 ["OurCalendar",CalendarDays],["Meal Planner",UtensilsCrossed],["OurWishlist",Gift],["Love Jar",Heart],["To-do",CheckCircle2]
               ].map(([name,Icon])=><button key={name} className="os-menu-tile" onClick={()=>goTab(name)}><Icon size={26} strokeWidth={1.7}/><span>{name}</span></button>)}</div>
+              <section className="os-push-panel" aria-label="Push notifications">
+                <div><strong>🔔 Phone notifications</strong><p>{pushState === "enabled" ? "Notifications are enabled on this device." : pushState === "unsupported" ? "On iPhone, open OurSpace from the Home Screen icon (iOS 16.4+)." : pushState === "blocked" ? "Notifications blocked. Allow them in your phone settings." : "Get OurChat messages and due reminders, even when OurSpace is closed."}</p>{pushError && <small role="alert">{pushError}</small>}</div>
+                {pushState === "enabled" ? <button onClick={disablePush}>Turn off</button> : <button disabled={pushState === "saving" || pushState === "checking"} onClick={enablePush}>{pushState === "saving" ? "Enabling..." : "Enable notifications"}</button>}
+              </section>
               <div className="os-home-summary"><div><small>Expenses recorded</small><b>{fmt(expenseTotal+receiptsTotal)}</b></div><div><small>Grocery to buy</small><b>{groceryItems.filter(x=>!x.done).length}</b></div><div><small>Reminders pending</small><b>{reminders.filter(x=>!x.completed).length}</b></div></div>
             </div>
           )}
@@ -1364,7 +1419,7 @@ function App() {
                   </div>
                 ))}
               </div>
-              <p className="muted">Reminders sync in real time. Phone push notifications are not enabled yet.</p>
+              <p className="muted">Reminders sync in real time. Enable phone notifications from the Home screen to receive alerts while OurSpace is closed.</p>
             </>
           )}
           {tab === "OurCalendar" && <div className="os-feature">
