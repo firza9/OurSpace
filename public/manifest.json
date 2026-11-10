@@ -1,0 +1,16 @@
+{
+  "name": "OurSpace",
+  "short_name": "OurSpace",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FFF6EE",
+  "theme_color": "#FFF6EE",
+  "icons": [
+    {
+      "src": "/ourspace-icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
