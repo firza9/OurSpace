@@ -158,3 +158,13 @@ html.os-chat-active,body.os-chat-active,#root:has(.app-chat){height:100%;overflo
 .app-chat .content-chat .chat-messages{flex:1 1 0;min-height:0;max-height:none;overflow-x:hidden;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain}
 .app-chat .content-chat .chat-compose{position:relative;bottom:auto}
 @media(max-width:600px){.app.app-chat{height:100dvh}.app-chat .content-chat .chat-shell{height:100%}}
+
+/* iPhone chat viewport: account bar hidden in chat; composer fully visible */
+body.os-chat-active .os-session-bar{display:none!important}
+html.os-chat-active,body.os-chat-active{height:100%;max-height:100%;overflow:hidden}
+.app-chat .content-chat .chat-compose{padding-bottom:max(22px,calc(env(safe-area-inset-bottom,0px) + 14px));z-index:2}
+.app-chat .content-chat .chat-messages{scrollbar-width:none}
+.app-chat .content-chat .chat-messages::-webkit-scrollbar{display:none}
+@supports(height:100svh){.app.app-chat{height:100svh;max-height:100svh}}
+@supports(height:100dvh){.app.app-chat{height:100dvh;max-height:100dvh}}
+@media(max-width:600px){.app-chat .content-chat .chat-compose{padding:12px 12px max(24px,calc(env(safe-area-inset-bottom,0px) + 14px))}}
