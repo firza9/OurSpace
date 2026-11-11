@@ -87,3 +87,16 @@ body{background:var(--page);color:var(--ink)}button{background:var(--mocha);colo
 @media(max-width:600px){.dashboard-welcome{margin-bottom:20px}.home-illustration{font-size:64px;width:75px;height:75px}.dashboard-welcome h1{font-size:25px;max-width:240px}.dashboard-welcome p{font-size:12px}.dashboard-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.dashboard-events,.dashboard-dinner{grid-column:span 2}.dashboard-grid>.panel{padding:18px}.dashboard-stat{grid-column:span 1}.dashboard-stat:last-child{grid-column:span 2}.os-menu-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}.os-menu-tile{font-size:11px;min-height:94px}.v12-section-head h2{font-size:18px}.v12-section-head>.muted{display:none}.notification{align-items:flex-start;flex-direction:column}.notification-actions{display:flex}.pantry-grid{grid-template-columns:1fr}.os-topbar .avatar{font-size:10px;padding:8px}.os-top-title{font-size:16px}.v12-actions{gap:4px}.os-bottom-nav button{padding-left:8px;padding-right:8px}.v12-toolbar>button{font-size:12px}}
 
 nav button.active{color:var(--on-mocha)}
+
+/* Receipt Vault: keep upload control within the card on iPhone and desktop */
+.receipt-upload-panel{min-width:0;max-width:100%;overflow:hidden}
+.receipt-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:stretch;gap:12px}
+.receipt-form>*{min-width:0;max-width:100%;width:100%;flex:none}
+.receipt-form>textarea,.receipt-form>.receipt-file-field{grid-column:1/-1}
+.receipt-file-field{display:flex;flex-direction:column;gap:9px;min-width:0;max-width:100%;font-size:13px;font-weight:600;overflow:hidden}
+.receipt-file-field input[type=file]{display:block;width:100%;min-width:0;max-width:100%;box-sizing:border-box;padding:10px;border:1px dashed var(--border,#e5d6c9);border-radius:12px;background:var(--surface,#fff);color:var(--ink,#241d19);font-size:12px;overflow:hidden}
+.receipt-file-field input[type=file]::file-selector-button{border:0;border-radius:8px;background:var(--soft,#f0e2d4);color:var(--ink,#241d19);padding:9px 12px;margin-right:10px;font:inherit;font-weight:600;cursor:pointer}
+.receipt-file-name{display:block;overflow-wrap:anywhere;font-weight:400;color:var(--muted,#8f7d70)}
+.receipt-form>label:has(input[type=checkbox]){grid-column:1/-1;display:flex;align-items:center;gap:9px;font-size:13px}
+.receipt-form>button{grid-column:1/-1;width:100%}
+@media(max-width:600px){.receipt-form{grid-template-columns:minmax(0,1fr)}.receipt-form>*{grid-column:1/-1}.receipt-file-field input[type=file]{font-size:12px}}
