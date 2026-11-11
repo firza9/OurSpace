@@ -259,14 +259,7 @@ function App() {
     };
   }, [householdId, currentUserId]);
 
-  // Keep the latest message visible whenever Chat opens or a message arrives.
-  useLayoutEffect(() => {
-    if (tab !== "OurChat") return;
-    const el = chatMessagesRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [tab, chatMessages, chatSearchOpen]);
-
-    const sendChatMessage = async () => {
+  const sendChatMessage = async () => {
     if (!chatText.trim() || chatSending) return;
     if (!householdId || !currentUserId) {
       alert("Household not ready. Check OurChat status.");
@@ -961,6 +954,13 @@ function App() {
       document.body.classList.remove("os-chat-active");
     };
   }, [tab]);
+    // Keep the latest message visible whenever Chat opens or a message arrives.
+  useLayoutEffect(() => {
+    if (tab !== "OurChat") return;
+    const el = chatMessagesRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [tab, chatMessages, chatSearchOpen]);
+
     const update = (key, val) =>
     setDb((d) => ({
       ...d,
