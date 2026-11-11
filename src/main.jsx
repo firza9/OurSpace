@@ -1235,18 +1235,20 @@ function App() {
           {tab === "Receipts" && (
             <>
               {heading("Receipt Vault", "Save photos and receipt breakdowns, synced across devices.")}
-              <div className="panel">
+              <div className="panel receipt-upload-panel">
                 <h3>Add receipt</h3>
-                <div className="form">
+                <div className="form receipt-form">
                   {field("store", "Shop name")}
                   {field("date", "Purchase date", "date")}
                   {field("total", "Total (RM)", "number")}
                   <textarea placeholder={"Items (one per line):\nAyam | 15.90\nTelur | 13.50"}
                     value={form.items || ""}
                     onChange={(e) => setForm((f) => ({ ...f, items: e.target.value }))} />
-                  <label>Receipt photo (optional, max 5 MB)
+                  <label className="receipt-file-field">
+                    <span>Receipt photo (optional, max 5 MB)</span>
                     <input type="file" accept="image/*" capture="environment"
                       onChange={(e) => setReceiptFile(e.target.files?.[0] || null)} />
+                    {receiptFile && <small className="receipt-file-name">{receiptFile.name}</small>}
                   </label>
                   <label><input type="checkbox" checked={!!form.createExpense}
                     onChange={(e) => setForm((f) => ({ ...f, createExpense: e.target.checked }))} />
