@@ -937,6 +937,7 @@ function App() {
     [replyTo, setReplyTo] = useState(null),
     [tab, setTab] = useState(() => { const requested = new URLSearchParams(location.search).get("tab"); return sections.some(([name]) => name === requested) ? requested : "Dashboard"; }),
     [menu, setMenu] = useState(false),
+    
     [draft, setDraft] = useState(""),
     [form, setForm] = useState({}),
     [month, setMonth] = useState(localDate().slice(0, 7));
@@ -944,7 +945,15 @@ function App() {
     () => localStorage.setItem("ourspace-v1", JSON.stringify(db)),
     [db],
   );
-  const update = (key, val) =>
+  useEffect(() => {
+    document.documentElement.classList.toggle("os-chat-active", tab === "OurChat");
+    document.body.classList.toggle("os-chat-active", tab === "OurChat");
+    return () => {
+      document.documentElement.classList.remove("os-chat-active");
+      document.body.classList.remove("os-chat-active");
+    };
+  }, [tab]);
+    const update = (key, val) =>
     setDb((d) => ({
       ...d,
       [key]: typeof val === "function" ? val(d[key]) : val,
@@ -1095,7 +1104,7 @@ function App() {
     {pushState === "enabled" ? <button onClick={disablePush}>Turn off</button> : <button disabled={pushState === "saving" || pushState === "checking" || !pushSupported} onClick={enablePush}>{pushState === "saving" ? "Enabling..." : "Enable notifications"}</button>}
   </section>;
   return (
-    <div className="app">
+    <div className={tab === "OurChat" ? "app app-chat" : "app"}>
       {menu&&<button className="menu-backdrop" aria-label="Close feature menu" onClick={()=>setMenu(false)}/>}
       <aside className={menu ? "open" : ""}>
         <div className="brand"><span className="os-brand-mark">⌂</span> OurSpace ♡<small>our little space, for life together</small></div>
