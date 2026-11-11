@@ -1,18 +1,16 @@
-# OurSpace v0.2 — Nude Beige & Black
+# OurSpace 1.2
 
-## Run locally
-Open the `ourspace-starter` folder (the one containing `package.json`) in VS Code.
+A React + Vite household app with Supabase Auth, household-scoped data, private receipts and web push.
 
-```powershell
-npm.cmd install
-npm.cmd run dev
+```sh
+npm ci
+cp .env.example .env.local
+# Set the existing project's public browser configuration in .env.local.
+npm run dev
+npm test
+npm run build
 ```
 
-## Deploy to Netlify
-Build command: `npm run build`; publish directory: `dist`. A `netlify.toml` is included.
+Netlify build command: `npm run build`; output: `dist`. Never put service-role keys, CRON_SECRET or VAPID private keys in frontend variables or git.
 
-## Features
-Dashboard, recipes (paste and TikTok links), grocery list, receipt breakdown entry, expenses, savings, recurring loan payment checklists, shared credit card ledger, to-do, and **OurChat demo** with reply, pin, and convert message to grocery/to-do.
-
-## Important
-All data is currently stored in localStorage on **one browser/device**. OurChat is a UI demo: switching sender simulates the two participants; it does **not** send messages to your spouse's phone. For real two-device sync and secure access, Supabase Auth + database policies + Realtime must be configured. Avoid entering actual banking secrets or sensitive personal information into this demo.
+See [v1.2 rollout](docs/V1_2_ROLLOUT.md) for the inspected database assumptions, feature phases, exact manual migration prerequisites, flags, browser tests, and limitations. **The new SQL files are manual only.** Keep both new feature flags false until their corresponding SQL and RLS checks are complete. Phase 1 needs no new tables.

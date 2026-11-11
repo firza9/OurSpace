@@ -1,6 +1,7 @@
 // Supabase Edge Function: push-dispatch
 // Deploy with JWT verification disabled, and require a separate high-entropy CRON_SECRET header.
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { isQuietHours } from "../_shared/quiet-hours.js";
 import webpush from "npm:web-push@3.6.7";
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), {status,headers:{"content-type":"application/json"}});
@@ -24,15 +25,31 @@ Deno.serve(async (request) => {
   ]);
   if (messages.error || reminders.error) return json({error:messages.error?.message || reminders.error?.message},500);
   const events = [
-    ...(messages.data || []).map(m=>({key:`chat:${m.id}`,household:m.household_id,exclude:m.sender_id,title:"New OurChat message",body:String(m.body).slice(0,100),url:"/?tab=OurChat"})),
-    ...(reminders.data || []).map(r=>({key:`reminder:${r.id}`,household:r.household_id,exclude:null,title:"OurSpace reminder",body:String(r.title).slice(0,100),url:"/?tab=Reminders"})),
+    ...(messages.data || []).map(m=>({key:`chat:${m.id}`,household:m.household_id,exclude:m.sender_id,title:"New OurChat message",body:String(m.body).slice(0,100),url:`/?tab=OurChat&item=${encodeURIComponent(m.id)}`})),
+    ...(reminders.data || []).map(r=>({key:`reminder:${r.id}`,household:r.household_id,exclude:null,title:"OurSpace reminder",body:String(r.title).slice(0,100),url:`/?tab=Reminders&item=${encodeURIComponent(r.id)}`})),
   ];
-  let sent = 0,failed = 0;
+  const smarterNotifications = Deno.env.get("OURSPACE_V12_NOTIFICATIONS_ENABLED") === "true";
+  let sent = 0,failed = 0, suppressed = 0;
   for (const event of events) {
     const {data:subs,error} = await db.from("push_subscriptions").select("id,endpoint,user_id,p256dh,auth").eq("household_id",event.household);
     if (error) {failed++;continue;}
     for (const sub of subs || []) {
       if (sub.user_id === event.exclude) continue;
+      // Opt in only AFTER manual migration 001. Existing dispatch behavior stays intact otherwise.
+      if (smarterNotifications) {
+        const [prefs, state] = await Promise.all([
+          db.from("user_preferences").select("quiet_enabled,quiet_start,quiet_end,timezone").eq("user_id",sub.user_id).maybeSingle(),
+          db.from("notification_states").select("read_at,snoozed_until").eq("user_id",sub.user_id).eq("household_id",event.household).eq("event_key",event.key).maybeSingle(),
+        ]);
+        // Fail closed rather than bypassing a user's preferences when the new schema is unavailable.
+        if (prefs.error || state.error) { failed++; continue; }
+        try {
+          if ((prefs.data && isQuietHours(prefs.data, now)) || state.data?.read_at ||
+              (state.data?.snoozed_until && new Date(state.data.snoozed_until) > now)) {
+            suppressed++; continue;
+          }
+        } catch { failed++; continue; }
+      }
       const {error:claimError} = await db.from("push_deliveries").insert({subscription_id:sub.id,event_key:event.key});
       if (claimError?.code === "23505") continue;
       if (claimError) {failed++;continue;}
@@ -47,5 +64,5 @@ Deno.serve(async (request) => {
       }
     }
   }
-  return json({events:events.length,sent,failed});
+  return json({events:events.length,sent,failed,suppressed});
 });

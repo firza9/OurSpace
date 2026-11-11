@@ -11,6 +11,7 @@ export default function AuthGate({ children }) {
   const [message, setMessage] = useState('');
 
   useEffect(() => {
+    if (!supabase) { setLoading(false); return; }
     let active = true;
     supabase.auth.getSession().then(({ data, error }) => {
       if (!active) return;
@@ -51,6 +52,8 @@ export default function AuthGate({ children }) {
     setBusy(false);
   }
 
+  if (!supabase) return <div style={styles.center}><div style={styles.card}><h2>OurSpace needs its connection</h2><p>Ask the site administrator to configure Supabase before signing in.</p></div></div>;
+
   if (loading) return <div style={styles.center}>Loading OurSpace...</div>;
 
   if (session) return <>
@@ -59,7 +62,7 @@ export default function AuthGate({ children }) {
       <button type="button" onClick={logout} disabled={busy} style={styles.logout}>Log out</button>
     </div>
     {message && <p role="alert" style={styles.notice}>{message}</p>}
-    {children}
+    {React.Children.map(children, child => React.isValidElement(child) ? React.cloneElement(child, {key: session.user.id}) : child)}
   </>;
 
   return <div style={styles.center}>
@@ -94,6 +97,6 @@ const styles = {
   submit: { marginTop: 16, padding: 13, background: '#382b25', color: 'white', border: 0, borderRadius: 10, fontWeight: 700, cursor: 'pointer' },
   switch: { display: 'block', margin: '20px auto 0', border: 0, background: 'transparent', color: '#665040', textDecoration: 'underline', cursor: 'pointer' },
   notice: { color: '#8a422f', fontSize: 13, lineHeight: 1.5 },
-  sessionBar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '8px 18px', background: '#e9dfd3', color: '#382b25', fontSize: 12 },
-  logout: { border: '1px solid #bcae9f', background: '#fffaf5', borderRadius: 8, padding: '6px 12px', color: '#382b25', cursor: 'pointer' },
+  sessionBar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '8px 18px', background: 'var(--soft)', color: 'var(--ink)', fontSize: 12 },
+  logout: { border: '1px solid #bcae9f', background: 'var(--surface)', borderRadius: 8, padding: '6px 12px', color: 'var(--ink)', cursor: 'pointer' },
 };

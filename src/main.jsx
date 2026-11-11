@@ -1,3 +1,6 @@
+import useNotifications from "./useNotifications";
+import { NotificationCentre, Profile, Pantry } from "./V12Panels";
+import { localDate, monthlySpending, missingIngredients } from "./v12-utils";
 import AuthGate from "./AuthGate";
 import { supabase } from "./supabase";
 import React, { useState, useEffect } from "react";
@@ -66,21 +69,23 @@ const sections = [
   ["Meal Planner", UtensilsCrossed],
   ["OurWishlist", Gift],
   ["Love Jar", Heart],
+  ["Pantry & Fridge", ShoppingBasket],
+  ["Updates", Bell],
+  ["Profile", UserRound],
 ];
 const uid = () => crypto.randomUUID();
 function App() {
   const createHousehold = async () => {
-    const { data, error } = await supabase.rpc("create_my_household", {
+    const { error } = await supabase.rpc("create_my_household", {
       household_name: "Our Home",
     });
 
     if (error) {
       alert("Error: " + error.message);
-      return;
+      return false;
     }
 
-    alert("Our Home created successfully!");
-    console.log("Household ID:", data);
+    return true;
   };
   const [db, setDb] = useState(() => {
     try {
@@ -92,6 +97,12 @@ function App() {
       return seed;
     }
   });
+  const [inventory, setInventory] = useState([]);
+  const [quickAdd, setQuickAdd] = useState(false);
+  const [chatSearch, setChatSearch] = useState("");
+  const [todoFilter, setTodoFilter] = useState("All");
+  const [expenseMonth, setExpenseMonth] = useState(localDate().slice(0,7));
+  const [groceryFilter, setGroceryFilter] = useState("All");
   const [pushState, setPushState] = useState("checking");
   const [pushError, setPushError] = useState("");
   const pushSupported = typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
@@ -211,6 +222,7 @@ function App() {
     const byId = new Map(messages.map((m) => [m.id, m]));
     setChatMessages(messages.map((m) => ({
       id: m.id,
+      createdAt: m.created_at,
       text: m.body,
       senderId: m.sender_id,
       who: m.sender_id === userId ? "You" : "Partner",
@@ -373,14 +385,14 @@ function App() {
       alert("Household not ready yet.");
       return;
     }
-    const rows = ingredients.filter((v) => String(v).trim()).map((name) => ({
+    const rows = missingIngredients(ingredients, groceryItems, inventory).map((name) => ({
       household_id: householdId,
       created_by: currentUserId,
       name: String(name).trim(),
       estimated_price: 0,
       purchased: false,
     }));
-    if (!rows.length) return;
+    if (!rows.length) { alert("These ingredients already match your grocery list or available inventory. Check quantities before cooking."); return; }
     const { error } = await supabase.from("grocery_items").insert(rows);
     if (error) {
       alert("Failed to add ingredients: " + error.message);
@@ -571,7 +583,7 @@ function App() {
       .map((line) => { const [name, amount] = line.split("|"); return { name: name.trim(), amount: Number(amount || 0) }; });
     const { data: saved, error } = await supabase.from("receipts").insert({
       household_id: householdId, created_by: currentUserId, merchant,
-      purchased_on: form.date || new Date().toLocaleDateString("en-CA"),
+      purchased_on: form.date || localDate(),
       total, image_path: imagePath, items
     }).select("id").single();
     if (error) {
@@ -582,7 +594,7 @@ function App() {
       const { error: expenseError } = await supabase.from("expenses").insert({
         household_id: householdId, created_by: currentUserId,
         description: merchant, amount: total, category: "Groceries",
-        spent_on: form.date || new Date().toLocaleDateString("en-CA"),
+        spent_on: form.date || localDate(),
         paid_by: currentUserId, receipt_id: saved.id
       });
       if (expenseError) setReceiptError(`Receipt saved, but expense failed: ${expenseError.message}`);
@@ -647,7 +659,7 @@ function App() {
       description,
       amount,
       category: form.category || "Other",
-      spent_on: form.spent_on || new Date().toLocaleDateString("en-CA"),
+      spent_on: form.spent_on || localDate(),
       paid_by: form.payer === "Me" ? currentUserId : null,
       payment_method: null,
     });
@@ -744,21 +756,23 @@ function App() {
   const [calendarError, setCalendarError] = useState("");
   const [calendarSaving, setCalendarSaving] = useState(false);
   const [editingCalendarId, setEditingCalendarId] = useState(null);
-  const [calendarDate, setCalendarDate] = useState(() => new Date().toISOString().slice(0,10));
-  const [calendarMonth, setCalendarMonth] = useState(() => new Date().toISOString().slice(0,7));
+  const [calendarDate, setCalendarDate] = useState(() => localDate());
+  const [calendarMonth, setCalendarMonth] = useState(() => localDate().slice(0,7));
   const [mealWeek, setMealWeek] = useState(0);
   const [wishlistFilter, setWishlistFilter] = useState("All");
   const [loveOpened, setLoveOpened] = useState(null);
   const [synced, setSynced] = useState({goals:[],contributions:[],commitments:[],payments:[],cards:[],transactions:[],todos:[]});
   const [syncError, setSyncError] = useState("");
+  const [syncStatus, setSyncStatus] = useState({});
   const tableMap = {meals:"meal_plans",wishlist:"wishlist_items",love:"love_notes",goals:"savings_goals",contributions:"savings_contributions",commitments:"commitments",payments:"commitment_payments",cards:"credit_cards",transactions:"credit_transactions",todos:"todos"};
   const reloadAll = async (homeId) => {
     const keys = Object.keys(tableMap);
     const results = await Promise.all(keys.map(k=>supabase.from(tableMap[k]).select("*").eq("household_id",homeId)));
     const errors = results.map((r,i)=>r.error ? `${tableMap[keys[i]]}: ${r.error.message}` : null).filter(Boolean);
     setSyncError(errors.join(" | "));
-    setExtra({meals:results[0].data||[],wishlist:results[1].data||[],love:results[2].data||[]});
-    setSynced(Object.fromEntries(keys.slice(3).map((k,i)=>[k,results[i+3].data||[]])));
+    setSyncStatus(Object.fromEntries(keys.map((k,i)=>[k,results[i].error ? 'error' : 'ready'])));
+    setExtra(previous=>({...previous,...Object.fromEntries(keys.slice(0,3).filter((k)=>!results[keys.indexOf(k)].error).map(k=>[k,results[keys.indexOf(k)].data||[]]))}));
+    setSynced(previous=>({...previous,...Object.fromEntries(keys.slice(3).filter((k)=>!results[keys.indexOf(k)].error).map(k=>[k,results[keys.indexOf(k)].data||[]]))}));
   };
   useEffect(()=>{
     if(!householdId) return;
@@ -816,11 +830,12 @@ function App() {
   };
   const addCard=async()=>{
     if(!form.cardLabel?.trim())return alert("Enter card name.");
+    if(form.lastFour && !/^\d{4}$/.test(form.lastFour))return alert("Enter exactly four digits, or leave it empty.");
     const ok=await mutate("cards","insert",{created_by:currentUserId,label:form.cardLabel.trim(),last_four:form.lastFour||null});
     if(ok)setForm({});
   };
   const addTransaction=async()=>{
-    if(!form.name?.trim()||!form.cardId||Number(form.amount)<0||!form.amount)return alert("Choose a card and enter purchase and amount.");
+    if(!form.name?.trim()||!form.cardId||!Number.isFinite(Number(form.amount))||Number(form.amount)<0||!form.amount)return alert("Choose a card and enter purchase and amount.");
     const ok=await mutate("transactions","insert",{created_by:currentUserId,card_id:form.cardId,description:form.name.trim(),amount:Number(form.amount),responsibility:form.who==="Personal"?"personal":"shared",responsible_user:form.who==="Personal"?currentUserId:null});
     if(ok)setForm({});
   };
@@ -872,21 +887,28 @@ function App() {
     if (error) { alert("Calendar error: " + error.message); return; }
     await loadCalendarEvents(householdId);
   };
-  const calendarRemindersForDate = date => reminders.filter(r => r.remind_at && new Date(r.remind_at).toLocaleDateString("en-CA") === date);
+  const calendarRemindersForDate = date => reminders.filter(r => r.remind_at && localDate(r.remind_at) === date);
   const extraField = (key, label, type="text") => <label className="os-field"><span>{label}</span><input type={type} value={extraDraft[key] || ""} onChange={e=>setExtraDraft(v=>({...v,[key]:e.target.value}))} /></label>;
   const openExtra = type => {setExtraDraft({});setExtraModal(type);};
-  const goTab = name => {setTab(name);setMenu(false);setForm({});};
+  const goTab = (name, target = null) => {
+    if (!sections.some(([section]) => section === name)) return;
+    setTab(name);setMenu(false);setForm({});setSelectedRecipe(null);
+    const url = new URL(window.location.href); url.searchParams.set("tab", name);
+    if (target) url.searchParams.set("item", target); else url.searchParams.delete("item");
+    window.history.pushState({}, "", url);
+    if (target) requestAnimationFrame(() => document.getElementById(`item-${target}`)?.scrollIntoView({ block: "center" }));
+  };
   const monthTitle = new Date(calendarMonth+"-01T12:00:00").toLocaleDateString("en-MY",{month:"long",year:"numeric"});
-  const shiftCalendar = n => {const d=new Date(calendarMonth+"-01T12:00:00");d.setMonth(d.getMonth()+n);setCalendarMonth(d.toISOString().slice(0,7));};
+  const shiftCalendar = n => {const d=new Date(calendarMonth+"-01T12:00:00");d.setMonth(d.getMonth()+n);setCalendarMonth(localDate(d).slice(0,7));setCalendarDate(localDate(d));};
   const weekStart = () => {const d=new Date();d.setHours(12,0,0,0);d.setDate(d.getDate()-(d.getDay()+6)%7+mealWeek*7);return d;};
-  const mealDays = Array.from({length:7},(_,i)=>{const d=weekStart();d.setDate(d.getDate()+i);return {iso:d.toISOString().slice(0,10), day:d.toLocaleDateString("en-MY",{weekday:"short"}), date:d.getDate()};});
+  const mealDays = Array.from({length:7},(_,i)=>{const d=weekStart();d.setDate(d.getDate()+i);return {iso:localDate(d), day:d.toLocaleDateString("en-MY",{weekday:"short"}), date:d.getDate()};});
   const [chatText, setChatText] = useState(""),
     [replyTo, setReplyTo] = useState(null),
-    [tab, setTab] = useState("Dashboard"),
+    [tab, setTab] = useState(() => { const requested = new URLSearchParams(location.search).get("tab"); return sections.some(([name]) => name === requested) ? requested : "Dashboard"; }),
     [menu, setMenu] = useState(false),
     [draft, setDraft] = useState(""),
     [form, setForm] = useState({}),
-    [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+    [month, setMonth] = useState(localDate().slice(0, 7));
   useEffect(
     () => localStorage.setItem("ourspace-v1", JSON.stringify(db)),
     [db],
@@ -903,6 +925,9 @@ function App() {
   const del = (key, id) => update(key, (arr) => arr.filter((x) => x.id !== id));
   const field = (key, placeholder, type = "text") => (
     <input
+      aria-label={placeholder}
+      min={type === "number" ? 0 : undefined}
+      step={type === "number" ? "any" : undefined}
       placeholder={placeholder}
       type={type}
       value={form[key] ?? ""}
@@ -940,7 +965,7 @@ function App() {
     let [y, m] = start.split("-").map(Number);
     return Array.from({ length: count }, (_, i) => {
       let d = new Date(y, m - 1 + i, 1);
-      return d.toISOString().slice(0, 7);
+      return localDate(d).slice(0, 7);
     });
   };
   const togglePaid = (id, key) =>
@@ -983,7 +1008,7 @@ function App() {
   const list = (key, render) => (
     <div className="stack">
       {(key === "grocery" ? groceryItems : key === "recipes" ? recipeItems : db[key]).length ? (
-        (key === "grocery" ? groceryItems : key === "recipes" ? recipeItems : db[key]).map((x) => (
+        (key === "grocery" ? groceryItems.filter(x=>groceryFilter==="All"||(groceryFilter==="Purchased"?x.done:!x.done)) : key === "recipes" ? recipeItems : db[key]).map((x) => (
           <div className="item" key={x.id}>
             <div className="grow">{render(x)}</div>
             <button
@@ -1000,36 +1025,83 @@ function App() {
       )}
     </div>
   );
+  const [clock, setClock] = useState(Date.now());
+  useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 30000); return () => clearInterval(timer); }, []);
+  useEffect(() => {
+    const back = () => { const name = new URLSearchParams(location.search).get("tab"); setTab(sections.some(([section])=>section===name) ? name : "Dashboard"); };
+    window.addEventListener("popstate", back); return () => window.removeEventListener("popstate", back);
+  }, []);
+  useEffect(() => {
+    const target = new URLSearchParams(location.search).get("item");
+    if (target) document.getElementById(`item-${target}`)?.scrollIntoView({block:"center"});
+  }, [tab, chatMessages, reminders, synced.todos]);
+  useEffect(() => {
+    if (!householdId || import.meta.env.VITE_PANTRY_ENABLED !== 'true') return;
+    let active = true;
+    const load = async () => { const {data,error}=await supabase.from('pantry_items').select('*').eq('household_id',householdId); if(active && !error)setInventory(data||[]); };
+    load();
+    const channel=supabase.channel(`inventory-summary-${householdId}`).on('postgres_changes',{event:'*',schema:'public',table:'pantry_items',filter:`household_id=eq.${householdId}`},load).subscribe();
+    return ()=>{active=false;supabase.removeChannel(channel);};
+  },[householdId]);
+  const today = localDate(clock);
+  const currentMonth = today.slice(0,7);
+  const todaysEvents = calendarEvents.filter(x=>x.date===today);
+  const dinners = extra.meals.filter(x=>x.date===today && x.type==='Dinner');
+  const pendingTasks = synced.todos.filter(x=>!x.completed);
+  const dueCommitments = synced.commitments.flatMap(c=>{
+    if (!c.start_date) return [];
+    const index=(Number(currentMonth.slice(0,4))-Number(c.start_date.slice(0,4)))*12+Number(currentMonth.slice(5))-Number(c.start_date.slice(5,7));
+    if(index<0 || index>=Number(c.total_months||12) || synced.payments.some(p=>p.commitment_id===c.id && p.installment_number===index+1 && p.paid_at))return [];
+    const due=`${currentMonth}-${String(Math.min(Number(c.due_day)||1,new Date(Number(currentMonth.slice(0,4)),Number(currentMonth.slice(5)),0).getDate())).padStart(2,'0')}`;
+    return [{key:`commitment:${c.id}:${currentMonth}`,group:'Commitments',tab:'Commitments',title:c.title,body:`${fmt(c.amount)} due ${due}`,at:new Date(due+'T00:00:00').getTime()}];
+  });
+  const notificationEvents = [
+    ...chatMessages.filter(x=>x.senderId!==currentUserId).map(x=>({key:`chat:${x.id}`,group:'OurChat',tab:'OurChat',target:x.id,title:'A message from home',body:x.text,at:new Date(x.createdAt).getTime()})),
+    ...reminders.filter(x=>!x.completed).map(x=>({key:`reminder:${x.id}`,group:'Reminders',tab:'Reminders',target:x.id,title:x.title,body:'Your reminder is due',at:new Date(x.remind_at).getTime()})),
+    ...pendingTasks.filter(x=>x.due_at).map(x=>({key:`todo:${x.id}`,group:'To-do',tab:'To-do',target:x.id,title:x.title,body:'This task is due',at:new Date(x.due_at).getTime()})),
+    ...todaysEvents.map(x=>({key:`event:${x.id}`,group:'OurCalendar',tab:'OurCalendar',target:x.id,title:x.title,body:`Today · ${x.time?.slice(0,5)||'All day'}`,at:new Date(x.date+'T'+(x.time||'00:00:00')).getTime()})),
+    ...dueCommitments,
+  ];
+  const notifications = useNotifications(currentUserId,householdId,notificationEvents);
+  const badgeCount = name => notifications.unread.filter(x=>x.tab===name).length;
+  const pushPanel = <section className="os-push-panel" aria-label="Push notifications">
+    <div><strong>Phone notifications</strong><p>{pushState === "enabled" ? "Notifications are enabled on this device." : pushState === "unsupported" ? "On iPhone, open OurSpace from the Home Screen icon (iOS 16.4+)." : pushState === "blocked" ? "Notifications blocked. Allow them in your phone settings." : "Get OurChat messages and due reminders, even when OurSpace is closed."}</p>{pushError && <small role="alert">{pushError}</small>}</div>
+    {pushState === "enabled" ? <button onClick={disablePush}>Turn off</button> : <button disabled={pushState === "saving" || pushState === "checking" || !pushSupported} onClick={enablePush}>{pushState === "saving" ? "Enabling..." : "Enable notifications"}</button>}
+  </section>;
   return (
     <div className="app">
+      {menu&&<button className="menu-backdrop" aria-label="Close feature menu" onClick={()=>setMenu(false)}/>}
       <aside className={menu ? "open" : ""}>
         <div className="brand"><span className="os-brand-mark">⌂</span> OurSpace ♡<small>our little space, for life together</small></div>
-        <nav>{sections.map(([name, Icon]) => <button className={tab === name ? "active" : ""} onClick={()=>goTab(name)} key={name}><Icon size={19}/>{name}</button>)}</nav>
+        <nav aria-label="Feature navigation">{sections.map(([name, Icon]) => <button className={tab === name ? "active" : ""} onClick={()=>goTab(name)} key={name}><Icon size={19}/>{name}{badgeCount(name)>0&&<b className="nav-badge">{badgeCount(name)}</b>}</button>)}</nav>
         <p className="asidefoot">Made for our little home ♡</p>
       </aside>
       <main>
         <header className="os-topbar">
-          <button className="mobilemenu ghost" onClick={()=>setMenu(!menu)}><Menu /></button>
+          <button aria-label="Toggle feature menu" aria-expanded={menu} className="mobilemenu ghost" onClick={()=>setMenu(!menu)}><Menu /></button>
           <span className="os-top-title">⌂ OurSpace ♡</span>
-          <span className="avatar">Our Home ♡</span>
+          <div className="v12-actions"><button className="ghost" aria-label="Quick Add" onClick={()=>setQuickAdd(true)}><Plus size={20}/></button><button className="ghost header-updates" aria-label={`Updates, ${notifications.unread.length} unread`} onClick={()=>goTab("Updates")}><Bell size={20}/>{notifications.unread.length>0&&<b className="nav-badge">{notifications.unread.length}</b>}</button><button className="avatar" onClick={()=>goTab("Profile")}>Our Home ♡</button></div>
         </header>
         <div className="content">
-          {tab === "Dashboard" && (
-            <div className="os-home">
-              <div className="os-hero"><div className="os-hero-heading">⌂ OurSpace ♡</div><p>Our little space<br/>for life together ♡</p><div className="os-cats"><span>🐱</span><span>🐈</span></div><div className="os-hero-bottom"><strong>Good {new Date().getHours()<12?"morning":new Date().getHours()<18?"afternoon":"evening"}! ♡</strong><span>Here's our space today. ☾</span></div></div>
-              <div className="os-menu-grid">{[
-                ["OurChat",MessageCircle],["Grocery",ShoppingBasket],["Recipes",ChefHat],
-                ["Reminders",Bell],["Expenses",Wallet],["Receipts",Receipt],
-                ["Savings",PiggyBank],["Commitments",ListTodo],["Shared CC",CreditCard],
-                ["OurCalendar",CalendarDays],["Meal Planner",UtensilsCrossed],["OurWishlist",Gift],["Love Jar",Heart],["To-do",CheckCircle2]
-              ].map(([name,Icon])=><button key={name} className="os-menu-tile" onClick={()=>goTab(name)}><Icon size={26} strokeWidth={1.7}/><span>{name}</span></button>)}</div>
-              <section className="os-push-panel" aria-label="Push notifications">
-                <div><strong>🔔 Phone notifications</strong><p>{pushState === "enabled" ? "Notifications are enabled on this device." : pushState === "unsupported" ? "On iPhone, open OurSpace from the Home Screen icon (iOS 16.4+)." : pushState === "blocked" ? "Notifications blocked. Allow them in your phone settings." : "Get OurChat messages and due reminders, even when OurSpace is closed."}</p>{pushError && <small role="alert">{pushError}</small>}</div>
-                {pushState === "enabled" ? <button onClick={disablePush}>Turn off</button> : <button disabled={pushState === "saving" || pushState === "checking"} onClick={enablePush}>{pushState === "saving" ? "Enabling..." : "Enable notifications"}</button>}
+          {tab === "Dashboard" && <section className="os-home v12-dashboard">
+            <div className="dashboard-welcome"><div><span className="eyebrow">{new Date(clock).toLocaleDateString('en-MY',{weekday:'long',day:'numeric',month:'long'})}</span><h1>Good {new Date(clock).getHours()<12?'morning':new Date(clock).getHours()<18?'afternoon':'evening'}, home.</h1><p>A little space for everything we share.</p></div><span className="home-illustration" aria-hidden="true">⌂</span></div>
+            {!householdId && <div className="panel"><h3>Let’s find your home</h3><p>{chatError || 'Loading your household…'}</p><button onClick={async()=>{if(await createHousehold())window.location.reload();}}>Create Our Home</button></div>}
+            <div className="dashboard-grid">
+              <section className="panel dashboard-events"><div className="v12-section-head"><h3><CalendarDays size={18}/> Today, together</h3><button className="ghost" onClick={()=>{setCalendarDate(today);setCalendarMonth(currentMonth);goTab('OurCalendar');}}>Calendar →</button></div>
+                {calendarError ? <p role="alert">Events unavailable: {calendarError}</p> : calendarLoading ? <p>Loading events…</p> : todaysEvents.length ? todaysEvents.map(x=><div className="dashboard-event" key={x.id}><span>{x.time?.slice(0,5)||'All day'}</span><b>{x.title}</b></div>) : <p className="muted">A little room to breathe. No events today.</p>}
               </section>
-              <div className="os-home-summary"><div><small>Expenses recorded</small><b>{fmt(expenseTotal+receiptsTotal)}</b></div><div><small>Grocery to buy</small><b>{groceryItems.filter(x=>!x.done).length}</b></div><div><small>Reminders pending</small><b>{reminders.filter(x=>!x.completed).length}</b></div></div>
+              <section className="panel dashboard-dinner"><span className="eyebrow">ON THE TABLE TONIGHT</span><h3><UtensilsCrossed size={20}/> {dinners.length ? dinners.map(x=>x.title).join(' & ') : 'What’s for dinner?'}</h3><p>{syncStatus.meals==='error'?'Meal plan unavailable. Check the sync message below.':syncStatus.meals!=='ready'?'Loading your meal plan…':dinners.length ? 'Something lovely to look forward to.' : 'Let’s plan something delicious together.'}</p><button onClick={()=>{goTab('Meal Planner');setMealWeek(0);if(!dinners.length){openExtra('meal');setExtraDraft({date:today,type:'Dinner'});}}}>{dinners.length?'View meal plan':'Plan dinner'} →</button></section>
+              <button className="panel dashboard-stat" onClick={()=>goTab('To-do')}><ListTodo/><span>Pending tasks</span><strong>{syncStatus.todos==='ready'?pendingTasks.length:'—'}</strong><small>{syncStatus.todos==='error'?'Tasks unavailable':syncStatus.todos!=='ready'?'Loading…':`${pendingTasks.filter(x=>x.due_at&&localDate(x.due_at)<=today).length} due today or overdue`}</small></button>
+              <button className="panel dashboard-stat" onClick={()=>goTab('Grocery')}><ShoppingBasket/><span>Grocery to buy</span><strong>{groceryItems.filter(x=>!x.done).length}</strong><small>{groceryError?'Could not load grocery':groceryLoading?'Loading…':`${groceryItems.filter(x=>x.done).length} already picked up`}</small></button>
+              <button className="panel dashboard-stat" onClick={()=>{setExpenseMonth(currentMonth);goTab('Expenses');}}><Wallet/><span>This month’s spending</span><strong>{fmt(monthlySpending(expenses,receipts,currentMonth))}</strong><small>{expenseError||receiptError?'Some spending data unavailable':expenseLoading||receiptLoading?'Loading…':'Receipts counted once'}</small></button>
             </div>
-          )}
+            <div className="v12-section-head"><h2>Our little essentials</h2><span className="muted">Everything has a place</span></div>
+            <div className="os-menu-grid">{sections.filter(([name])=>!['Dashboard','Profile','Updates'].includes(name)).map(([name,Icon])=><button key={name} className="os-menu-tile" onClick={()=>goTab(name)}><Icon size={25} strokeWidth={1.6}/><span>{name}</span>{badgeCount(name)>0&&<b className="shortcut-badge" aria-label={`${badgeCount(name)} unread`}>{badgeCount(name)}</b>}</button>)}</div>
+          </section>}
+          {tab === 'Updates' && <NotificationCentre notifications={notifications} navigate={(name,target)=>{if(name==='OurCalendar'){setCalendarDate(today);setCalendarMonth(currentMonth);}goTab(name,target);}} />}
+          {tab === 'Profile' && <Profile notifications={notifications} pushPanel={pushPanel} ready={!!householdId} />}
+          {tab === 'Pantry & Fridge' && <Pantry householdId={householdId} userId={currentUserId} supabase={supabase} addGrocery={addGrocery} onInventory={setInventory} />}
+          {quickAdd && <div className="os-modal-overlay" onClick={()=>setQuickAdd(false)}><section className="os-modal" role="dialog" aria-modal="true" aria-label="Quick Add" onClick={e=>e.stopPropagation()}><div className="v12-section-head"><h2>Add a little something</h2><button className="ghost" aria-label="Close Quick Add" onClick={()=>setQuickAdd(false)}><X/></button></div><div className="quick-add-grid">{[['Grocery',ShoppingBasket],['To-do',ListTodo],['Reminders',Bell],['OurCalendar',CalendarDays],['Meal Planner',UtensilsCrossed],['Expenses',Wallet],['Recipes',ChefHat],['Pantry & Fridge',ShoppingBasket]].map(([name,Icon])=><button key={name} onClick={()=>{setQuickAdd(false);goTab(name);if(name==='OurCalendar')openCalendarEditor();if(name==='Meal Planner'){openExtra('meal');setExtraDraft({date:today,type:'Dinner'});}if(name==='Recipes')setRecipeComposer(true);}}><Icon size={22}/>{name}</button>)}</div></section></div>}
           {tab === "Recipes" && (
             <section className="recipe-page">
               <div className="recipe-hero">
@@ -1092,7 +1164,7 @@ function App() {
                   <p className="recipe-detail-sub">{selectedRecipe.ingredients.length} ingredients · {selectedRecipe.steps.length} cooking steps</p>
                   {selectedRecipe.source?.startsWith("http") && <a className="recipe-source-link" href={selectedRecipe.source} target="_blank" rel="noopener noreferrer">Open original video / recipe ↗</a>}
                   {selectedRecipe.ingredients.length > 0 && <section className="recipe-detail-section"><h3>Ingredients</h3><ul>{selectedRecipe.ingredients.map((item,i) => <li key={i}>{item}</li>)}</ul>
-                    <button className="recipe-grocery-btn" onClick={() => addRecipeIngredientsToGrocery(selectedRecipe.ingredients)}>+ Add ingredients to grocery</button>
+                    <p className="muted">Matching names already on your list or in stock are skipped. Check quantities and ingredient wording before shopping.</p><button className="recipe-grocery-btn" onClick={() => addRecipeIngredientsToGrocery(selectedRecipe.ingredients)}>+ Add missing ingredients to grocery</button><button className="ghost" onClick={()=>{goTab("Meal Planner");openExtra("meal");setExtraDraft({title:selectedRecipe.name,date:today,type:"Dinner"});}}>Plan this meal</button>
                   </section>}
                   {selectedRecipe.steps.length > 0 && <section className="recipe-detail-section"><h3>How to make it</h3><ol>{selectedRecipe.steps.map((item,i) => <li key={i}>{item}</li>)}</ol></section>}
                   {!selectedRecipe.steps.length && !selectedRecipe.ingredients.length && <p className="muted">This recipe is saved as a link. Open the original source for instructions.</p>}
@@ -1126,12 +1198,13 @@ function App() {
               {heading("Grocery List", "Tick items while shopping.")}
               <div className="panel form">
                 {field("name", "Item e.g. Telur 30 biji")}
+                {field("quantity", "Quantity e.g. 2 kg")}
                 {field("price", "Estimated price (RM)", "number")}
                 {btn(
                   "Add item",
                   async () => {
                     if (grocerySaving || !form.name?.trim()) return;
-                    const saved = await addGrocery(form.name, form.price);
+                    const saved = await addGrocery(form.name, form.price, form.quantity);
                     if (saved) setForm({});
                   },
                 )}
@@ -1141,6 +1214,7 @@ function App() {
                 fmt(groceryItems.reduce((a, x) => a + Number(x.price || 0), 0)),
                 "Based on entered prices",
               )}
+              <div className="v12-tabs">{["All","To buy","Purchased"].map(x=><button key={x} aria-pressed={groceryFilter===x} onClick={()=>setGroceryFilter(x)}>{x}</button>)}</div>
               {groceryLoading && <p className="muted">Loading grocery...</p>}
               {groceryError && <p className="muted">Grocery error: {groceryError}</p>}
               {!groceryLoading && !groceryError && list("grocery", (x) => (
@@ -1152,7 +1226,7 @@ function App() {
                       toggleGrocery(x)
                     }
                   />
-                  <span className={x.done ? "done" : ""}>{x.name}</span>
+                  <span className={x.done ? "done" : ""}>{x.name}<small>{x.quantity}</small></span>
                   <b>{fmt(x.price)}</b>
                 </label>
               ))}
@@ -1230,11 +1304,13 @@ function App() {
               </div>
               {expenseError && <p className="muted">Expense error: {expenseError}</p>}
               {expenseLoading && <p className="muted">Loading expenses...</p>}
-              {tile("Total logged", fmt(expenseTotal), "Excludes receipts")}
+              <label className="os-field">Spending month<input type="month" value={expenseMonth} onChange={e=>setExpenseMonth(e.target.value)} /></label>
+              {tile("Monthly spending", fmt(monthlySpending(expenses,receipts,expenseMonth)), "Includes unlinked receipts once")}
+              {tile("Total logged", fmt(expenseTotal), "Expenses across all months; excludes unlinked receipts")}
               <div className="stack">
                 {!expenseLoading && !expenseError && expenses.length === 0 &&
                   <p className="muted">No expenses yet.</p>}
-                {expenses.map((x) => (
+                {expenses.filter(x=>x.spent_on?.startsWith(expenseMonth)).map((x) => (
                   <div className="item" key={x.id}>
                     <div className="grow">
                       <b>{x.description} · {fmt(x.amount)}</b>
@@ -1251,13 +1327,13 @@ function App() {
           {tab === "Savings" && <>
             {heading("Savings Goals","Our shared milestones, synced on every device.")}
             <div className="panel form">{field("name","Goal name")}{field("target","Target RM","number")}<button onClick={addSavingsGoal}>Create goal</button></div>
-            {synced.goals.map(g=>{const saved=synced.contributions.filter(x=>x.goal_id===g.id).reduce((a,x)=>a+Number(x.amount),0);return <div className="panel" key={g.id}><h3>{g.title}</h3><p>{fmt(saved)} / {fmt(g.target_amount)}</p><progress value={saved} max={Math.max(1,Number(g.target_amount))}/><div className="form inline"><button onClick={()=>addContribution(g)}>+ Add savings</button><button className="ghost" onClick={()=>mutate("goals","delete",null,g.id)}>Delete</button></div></div>})}
+            {synced.goals.map(g=>{const saved=synced.contributions.filter(x=>x.goal_id===g.id).reduce((a,x)=>a+Number(x.amount),0);return <div className="panel" key={g.id}><h3>{g.title}</h3><p>{fmt(saved)} / {fmt(g.target_amount)}</p><p className="muted">{saved>=Number(g.target_amount)?"Goal reached ♡":`${fmt(Math.max(0,Number(g.target_amount)-saved))} to go`} · {Math.round(saved/Math.max(1,Number(g.target_amount))*100)}% saved</p><progress value={saved} max={Math.max(1,Number(g.target_amount))}/><div className="form inline"><button onClick={()=>addContribution(g)}>+ Add savings</button><button className="ghost" onClick={()=>mutate("goals","delete",null,g.id)}>Delete</button></div></div>})}
             {!synced.goals.length&&<p className="muted">No savings goals yet.</p>}
           </>}
           {tab === "Commitments" && <>
             {heading("Commitments & Loans","Track monthly instalments together.")}
             <div className="panel form">{field("name","Commitment name")}{field("amount","Monthly payment RM","number")}{field("start","Start month","month")}{field("months","Duration in months","number")}{field("dueDay","Due day (1-31)","number")}<button onClick={addCommitment}>Add commitment</button></div>
-            {synced.commitments.map(c=><div className="panel" key={c.id}><h3>{c.title} <span className="amount">{fmt(c.amount)}/mo</span></h3><p className="muted">Due day {c.due_day} · {c.total_months||12} instalments</p><div className="monthlist">{monthsOf(c.start_date.slice(0,7),Math.min(c.total_months||12,240)).map((m,i)=>{const paid=!!synced.payments.find(p=>p.commitment_id===c.id&&p.installment_number===i+1&&p.paid_at);return <label key={m} className="month"><input type="checkbox" checked={paid} onChange={()=>toggleCommitmentMonth(c,m,i)}/><span>{i+1}. {m}</span><b>{paid?"Paid":"Unpaid"}</b></label>})}</div><button className="ghost" onClick={()=>mutate("commitments","delete",null,c.id)}>Delete commitment</button></div>)}
+            {synced.commitments.map(c=><div className="panel" key={c.id}><h3>{c.title} <span className="amount">{fmt(c.amount)}/mo</span></h3><p className="muted">Due day {c.due_day} · {c.total_months||12} instalments · {synced.payments.filter(p=>p.commitment_id===c.id&&p.paid_at).length} paid</p><p className="muted">Remaining scheduled: {fmt(Math.max(0,(c.total_months||12)-synced.payments.filter(p=>p.commitment_id===c.id&&p.paid_at).length)*Number(c.amount))}</p><div className="monthlist">{monthsOf(c.start_date.slice(0,7),Math.min(c.total_months||12,240)).map((m,i)=>{const paid=!!synced.payments.find(p=>p.commitment_id===c.id&&p.installment_number===i+1&&p.paid_at);return <label key={m} className="month"><input type="checkbox" checked={paid} onChange={()=>toggleCommitmentMonth(c,m,i)}/><span>{i+1}. {m}</span><b>{paid?"Paid":"Unpaid"}</b></label>})}</div><button className="ghost" onClick={()=>mutate("commitments","delete",null,c.id)}>Delete commitment</button></div>)}
             {!synced.commitments.length&&<p className="muted">No commitments yet. Add existing loans here once.</p>}
           </>}
           {tab === "Shared CC" && <>
@@ -1275,10 +1351,11 @@ function App() {
                     <Heart size={19} />
                   </div>
                   <div>
-                    <b>Nana & Husband</b>
+                    <b>Our household</b>
                     <small>Private household conversation · Supabase</small>
                   </div>
                 </div>
+                <label className="os-field chat-search">Search messages<input type="search" value={chatSearch} onChange={e=>setChatSearch(e.target.value)} placeholder="Find a conversation…" /></label>
                 <div className="chat-messages">
                   {chatLoading && <p className="muted">Loading messages...</p>}
                   {chatError && <p className="muted">Chat error: {chatError}</p>}
@@ -1292,9 +1369,10 @@ function App() {
                       </p>
                     </div>
                   )}
-                  {chatMessages.map((msg) => (
+                  {chatMessages.filter(msg => msg.text.toLowerCase().includes(chatSearch.toLowerCase())).map((msg) => (
                     <div
                       key={msg.id}
+                      id={`item-${msg.id}`}
                       className={
                         "chat-row " + (msg.senderId === currentUserId ? "mine" : "theirs")
                       }
@@ -1331,13 +1409,8 @@ function App() {
                         </button>
                         <button
                           title="Add to to-do"
-                          onClick={() => {
-                            add("tasks", {
-                              name: msg.text,
-                              owner: "Both",
-                              done: false,
-                            });
-                            alert("Added to To-do");
+                          onClick={async () => {
+                            if (await mutate("todos", "insert", { title: msg.text, created_by: currentUserId })) alert("Added to To-do");
                           }}
                         >
                           <ListTodo size={14} />
@@ -1372,7 +1445,7 @@ function App() {
                     </button>
                   </form>
                   <p className="muted">
-                    Chat messages are saved in Supabase. Other features still use local storage.
+                    Private household conversation. Reply, pin, or turn a message into a shared task.
                   </p>
                 </div>
               </div>
@@ -1400,7 +1473,7 @@ function App() {
                 <p className="muted">No reminders yet.</p>}
               <div className="stack">
                 {reminders.map((item) => (
-                  <div className="item" key={item.id}>
+                  <div className="item" key={item.id} id={`item-${item.id}`}>
                     <div className="grow">
                       <label className="check">
                         <input type="checkbox" checked={item.completed} onChange={() => toggleReminder(item)} />
@@ -1427,10 +1500,10 @@ function App() {
             <div className="os-month-nav"><button className="ghost" onClick={()=>shiftCalendar(-1)}>‹</button><b>{monthTitle}</b><button className="ghost" onClick={()=>shiftCalendar(1)}>›</button></div>
             <div className="os-calendar">{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(x=><div className="os-weekday" key={x}>{x}</div>)}{Array.from({length:(new Date(calendarMonth+"-01T12:00:00").getDay()+6)%7},(_,i)=><div key={'blank'+i}/>)}{Array.from({length:new Date(Number(calendarMonth.slice(0,4)),Number(calendarMonth.slice(5)),0).getDate()},(_,i)=>{const day=calendarMonth+"-"+String(i+1).padStart(2,"0");return <button key={day} className={'os-day '+(calendarDate===day?'selected':'')} onClick={()=>setCalendarDate(day)}>{i+1}{(calendarEvents.some(x=>x.date===day)||calendarRemindersForDate(day).length>0)&&<i/>}</button>})}</div>
             <div className="os-section-row"><h3>{new Date(calendarDate+"T12:00:00").toLocaleDateString('en-MY',{weekday:'long',day:'numeric',month:'short',year:'numeric'})}</h3><button onClick={()=>openCalendarEditor()}>+ Add Event</button></div>
-            {calendarError && <p className="muted" role="alert">Calendar: {calendarError}. Run the included calendar SQL setup if this table is not created yet.</p>}
+            {calendarError && <p className="muted" role="alert">Calendar: {calendarError}. Ask the household administrator to check the existing calendar setup.</p>}
             {calendarLoading && <p className="muted">Loading events...</p>}
             <div className="os-list">
-              {calendarEvents.filter(x=>x.date===calendarDate).map(x=><div className="os-list-card" key={x.id}><CalendarDays/><div><b>{x.title}</b><small>{x.category||'Event'} · {x.time ? x.time.slice(0,5) : 'All day'}</small></div><button className="ghost" title="Edit event" onClick={()=>openCalendarEditor(x)}>Edit</button><button className="ghost" title="Delete event" onClick={()=>deleteCalendarEvent(x.id)}><Trash2 size={17}/></button></div>)}
+              {calendarEvents.filter(x=>x.date===calendarDate).map(x=><div className="os-list-card" key={x.id} id={`item-${x.id}`}><CalendarDays/><div><b>{x.title}</b><small>{x.category||'Event'} · {x.time ? x.time.slice(0,5) : 'All day'}</small></div><button className="ghost" title="Edit event" onClick={()=>openCalendarEditor(x)}>Edit</button><button className="ghost" title="Delete event" onClick={()=>deleteCalendarEvent(x.id)}><Trash2 size={17}/></button></div>)}
               {calendarRemindersForDate(calendarDate).map(x=><div className="os-list-card" key={'reminder-'+x.id}><Bell/><div><b>{x.title}</b><small>Reminder · {new Date(x.remind_at).toLocaleTimeString('en-MY',{hour:'2-digit',minute:'2-digit'})}{x.completed?' · Completed':''}</small></div><button className="ghost" onClick={()=>goTab('Reminders')}>View</button></div>)}
               {!calendarLoading && !calendarEvents.some(x=>x.date===calendarDate) && !calendarRemindersForDate(calendarDate).length && <p className="muted">No events yet for this day ♡</p>}
             </div>
@@ -1452,16 +1525,17 @@ function App() {
           {tab === "Love Jar" && <div className="os-feature os-love">
             <div className="os-page-heading"><Heart/><h2>Love Jar ♡</h2></div><p>A little jar of love, notes and appreciation for each other ♡</p>
             <div className="os-jar-art"><div className="os-jar-lid"/><div className="os-jar-body"><span>♡</span><div>💌 💌 💌</div></div><div className="os-jar-cats">🐱　🐈</div></div>
-            <button className="os-primary-wide" onClick={()=>{const visible=extraItems('love').filter(x=>!x.open_date||x.open_date<=new Date().toISOString().slice(0,10));if(!visible.length){alert('No notes ready to open yet ♡');return;}setLoveOpened(visible[Math.floor(Math.random()*visible.length)]);}}>Open a Note ♡</button>
+            <button className="os-primary-wide" onClick={()=>{const visible=extraItems('love').filter(x=>!x.open_date||x.open_date<=localDate());if(!visible.length){alert('No notes ready to open yet ♡');return;}setLoveOpened(visible[Math.floor(Math.random()*visible.length)]);}}>Open a Note ♡</button>
             <div className="os-love-actions"><button onClick={()=>openExtra('love')}><span>✎</span>Add a Note</button><button onClick={()=>{openCalendarEditor();setExtraDraft({date:calendarDate,category:'Date'});}}><span>♡</span>Surprise Date</button></div>
             <div className="os-section-row"><h3>Recent Notes ♡</h3><small>{extraItems('love').length} notes</small></div>
-            {extraItems('love').slice(0,4).map(x=><div className="os-list-card" key={x.id}><Heart size={18}/><div><b>{x.open_date&&x.open_date>new Date().toISOString().slice(0,10)?'Sealed until '+x.open_date:x.note}</b><small>{new Date(x.created_at).toLocaleDateString('en-MY')}</small></div><button className="ghost" onClick={()=>deleteExtra('love',x.id)}><Trash2 size={16}/></button></div>)}
+            {extraItems('love').slice(0,4).map(x=><div className="os-list-card" key={x.id}><Heart size={18}/><div><b>{x.open_date&&x.open_date>localDate()?'Sealed until '+x.open_date:x.note}</b><small>{new Date(x.created_at).toLocaleDateString('en-MY')}</small></div><button className="ghost" onClick={()=>deleteExtra('love',x.id)}><Trash2 size={16}/></button></div>)}
             {loveOpened&&<div className="os-modal-overlay" onClick={()=>setLoveOpened(null)}><div className="os-modal" onClick={e=>e.stopPropagation()}><h2>♡ A note for you</h2><p>{loveOpened.note}</p><button className="os-primary-wide" onClick={()=>setLoveOpened(null)}>Done ♡</button></div></div>}
           </div>}
           {tab === "To-do" && <>
             {heading("Shared To-do","A little less to remember.")}
             <div className="panel form">{field("name","New task")}{field("due","Due date","date")}<button onClick={addTodo}>Add task</button></div>
-            <div className="stack">{synced.todos.map(t=><div className="item" key={t.id}><label className="check grow"><input type="checkbox" checked={!!t.completed} onChange={()=>mutate("todos","update",{completed:!t.completed},t.id)}/><span className={t.completed?"done":""}>{t.title}<small>{t.due_at?new Date(t.due_at).toLocaleDateString("en-MY"):"No due date"}</small></span></label><button className="ghost" onClick={()=>mutate("todos","delete",null,t.id)}><Trash2 size={16}/></button></div>)}{!synced.todos.length&&<p className="muted">No tasks yet.</p>}</div>
+            <div className="v12-tabs">{["All","Pending","Done"].map(x=><button key={x} aria-pressed={todoFilter===x} onClick={()=>setTodoFilter(x)}>{x}</button>)}</div>
+            <div className="stack">{synced.todos.filter(t=>todoFilter==="All"||(todoFilter==="Done"?t.completed:!t.completed)).sort((a,b)=>Number(a.completed)-Number(b.completed)||String(a.due_at||"z").localeCompare(String(b.due_at||"z"))).map(t=><div className="item" key={t.id} id={`item-${t.id}`}><label className="check grow"><input type="checkbox" checked={!!t.completed} onChange={()=>mutate("todos","update",{completed:!t.completed},t.id)}/><span className={t.completed?"done":""}>{t.title}<small>{t.due_at?new Date(t.due_at).toLocaleDateString("en-MY"):"No due date"}</small></span></label><button className="ghost" onClick={()=>mutate("todos","delete",null,t.id)}><Trash2 size={16}/></button></div>)}{!synced.todos.length&&<p className="muted">No tasks yet.</p>}</div>
           </>}
           {syncError && <p className="muted" role="alert">Supabase sync: {syncError}</p>}
           {extraModal && <div className="os-modal-overlay" onClick={()=>setExtraModal('')}><div className="os-modal" onClick={e=>e.stopPropagation()}><div className="os-modal-title"><h2>{extraModal==='event'?(editingCalendarId?'♡ Edit Event':'♡ Add Event'):extraModal==='meal'?'🍽 Add Meal':extraModal==='wish'?'🎁 Add to Wishlist':'♡ Add a Love Note'}</h2><button className="ghost" onClick={()=>setExtraModal('')}><X/></button></div><form onSubmit={async e=>{e.preventDefault();if(extraModal==='event')await saveCalendarEvent();if(extraModal==='meal')await saveExtra('meals',extraDraft);if(extraModal==='wish')await saveExtra('wishlist',extraDraft);if(extraModal==='love')await saveExtra('love',extraDraft);}}>
@@ -1471,10 +1545,10 @@ function App() {
             {extraModal==='love'&&<><label className="os-field"><span>Your note</span><textarea required maxLength={500} value={extraDraft.note||''} onChange={e=>setExtraDraft(v=>({...v,note:e.target.value}))} placeholder="Thank you for always being there for me. ♡"/></label>{extraField('open_date','Open on a specific date (optional)','date')}</>}
             <div className="os-modal-actions"><button type="button" className="os-cancel" onClick={()=>setExtraModal('')}>Cancel</button><button type="submit" disabled={calendarSaving||extraBusy}>{(calendarSaving||extraBusy) ? "Saving..." : "Save ♡"}</button></div></form></div></div>}
           <footer>
-            OurSpace v0.8 · Household features synced with Supabase
+            OurSpace v1.2 · A little space for life together
           </footer>
         </div>
-        <div className="os-bottom-nav">{[["Dashboard",House,"Home"],["OurChat",MessageCircle,"Chat"],["Meal Planner",Plus,"Plan"],["Reminders",Bell,"Alerts"],["Love Jar",Heart,"Love"]].map(([name,Icon,label])=><button key={name} className={tab===name?'active':''} onClick={()=>goTab(name)}><Icon size={21}/><span>{label}</span></button>)}</div>
+        <nav className="os-bottom-nav" aria-label="Mobile navigation">{[["Dashboard",House,"Home"],["OurChat",MessageCircle,"Chat"],["Quick Add",Plus,"Quick Add"],["Updates",Bell,"Updates"],["Profile",UserRound,"Profile"]].map(([name,Icon,label])=><button key={name} aria-label={label} aria-current={tab===name?'page':undefined} className={tab===name?'active':''} onClick={()=>name==='Quick Add'?setQuickAdd(true):goTab(name)}><Icon size={21}/><span>{label}</span>{name==='Updates'&&notifications.unread.length>0&&<b className="nav-badge">{notifications.unread.length}</b>}</button>)}</nav>
       </main>
     </div>
   );
