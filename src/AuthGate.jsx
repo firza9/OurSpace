@@ -57,7 +57,7 @@ export default function AuthGate({ children }) {
   if (loading) return <div style={styles.center}>Loading OurSpace...</div>;
 
   if (session) return <>
-    <div style={styles.sessionBar}>
+    <div className="os-session-bar" style={styles.sessionBar}>
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Signed in: {session.user.email}</span>
       <button type="button" onClick={logout} disabled={busy} style={styles.logout}>Log out</button>
     </div>
