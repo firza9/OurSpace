@@ -168,3 +168,23 @@ html.os-chat-active,body.os-chat-active{height:100%;max-height:100%;overflow:hid
 @supports(height:100svh){.app.app-chat{height:100svh;max-height:100svh}}
 @supports(height:100dvh){.app.app-chat{height:100dvh;max-height:100dvh}}
 @media(max-width:600px){.app-chat .content-chat .chat-compose{padding:12px 12px max(24px,calc(env(safe-area-inset-bottom,0px) + 14px))}}
+
+/* Expenses: consistent labels, no overflow and readable light/dark summary */
+.expense-entry-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start;min-width:0}
+.expense-entry-form>.expense-form-field{display:flex;flex-direction:column;gap:7px;min-width:0;width:100%;max-width:100%;font-size:13px;font-weight:600;color:var(--ink)}
+.expense-form-field>span{line-height:1.3}
+.expense-entry-form .expense-form-field input,.expense-entry-form .expense-form-field select{display:block;width:100%;min-width:0;max-width:100%;height:46px;box-sizing:border-box;font-size:15px;background:var(--surface);color:var(--ink);border:1px solid var(--border);border-radius:12px;padding:10px 12px}
+.expense-entry-form .expense-form-field input[type=date]{appearance:none;-webkit-appearance:none;min-height:46px}
+.expense-entry-form .expense-form-field input[type=date]::-webkit-date-and-time-value{text-align:left;min-height:1em}
+.expense-entry-form .expense-receipt-field{grid-column:1/-1;overflow:visible}
+.expense-entry-form .expense-receipt-field small{font-weight:400;color:var(--muted)}
+.expense-entry-form .expense-receipt-field input[type=file]{max-width:100%;width:100%;font-size:12px}
+.expense-entry-form>button{grid-column:1/-1;min-height:46px;margin-top:2px;background:var(--mocha);color:var(--on-mocha)}
+.expense-overview{display:grid;gap:12px;margin:18px 0 22px}
+.expense-month-picker{display:flex;flex-direction:column;gap:8px;font-size:13px;font-weight:600;color:var(--ink)}
+.expense-month-picker input{width:100%;max-width:100%;min-width:0;height:46px}
+.expense-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.expense-summary-card{min-width:0;display:flex;flex-direction:column;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:18px 16px;color:var(--ink)}
+.expense-summary-card small{font-size:12px;color:var(--muted);font-weight:500}
+.expense-summary-card strong{font-size:clamp(18px,4vw,25px);font-weight:700;line-height:1.25;overflow-wrap:anywhere}
+@media(max-width:600px){.expense-entry-form{grid-template-columns:minmax(0,1fr);padding:18px 16px;gap:13px}.expense-entry-form>.expense-form-field{grid-column:1/-1}.expense-summary{gap:9px}.expense-summary-card{padding:15px 12px}.expense-summary-card strong{font-size:19px}}
