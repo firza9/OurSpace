@@ -57,7 +57,6 @@ const sections = [
   ["Dashboard", House],
   ["Recipes", ChefHat],
   ["Grocery", ShoppingBasket],
-  ["Receipts", Receipt],
   ["Expenses", Wallet],
   ["Savings", PiggyBank],
   ["Commitments", CalendarClock],
@@ -70,7 +69,6 @@ const sections = [
   ["OurWishlist", Gift],
   ["Love Jar", Heart],
   ["Pantry & Fridge", ShoppingBasket],
-  ["Updates", Bell],
   ["Profile", UserRound],
 ];
 const uid = () => crypto.randomUUID();
@@ -652,7 +650,29 @@ function App() {
       alert("Enter an expense description and valid amount."); return;
     }
     if (!householdId || !currentUserId || expenseSaving) return;
+    if (receiptFile && (!receiptFile.type.startsWith("image/") || receiptFile.size > 5 * 1024 * 1024)) {
+      alert("Choose a receipt image under 5 MB."); return;
+    }
     setExpenseSaving(true);
+    setExpenseError("");
+    let receiptId = null;
+    let imagePath = null;
+    if (receiptFile) {
+      const ext = (receiptFile.name.split(".").pop() || "jpg").toLowerCase();
+      imagePath = `${householdId}/${crypto.randomUUID()}.${ext}`;
+      const { error: uploadError } = await supabase.storage.from("receipt-images")
+        .upload(imagePath, receiptFile, { contentType: receiptFile.type, upsert: false });
+      if (uploadError) { setExpenseError(uploadError.message); setExpenseSaving(false); return; }
+      const { data: receipt, error: receiptError } = await supabase.from("receipts").insert({
+        household_id: householdId, created_by: currentUserId, merchant: description,
+        purchased_on: form.spent_on || localDate(), total: amount, image_path: imagePath, items: []
+      }).select("id").single();
+      if (receiptError) {
+        await supabase.storage.from("receipt-images").remove([imagePath]);
+        setExpenseError(receiptError.message); setExpenseSaving(false); return;
+      }
+      receiptId = receipt.id;
+    }
     const { error } = await supabase.from("expenses").insert({
       household_id: householdId,
       created_by: currentUserId,
@@ -662,11 +682,18 @@ function App() {
       spent_on: form.spent_on || localDate(),
       paid_by: form.payer === "Me" ? currentUserId : null,
       payment_method: null,
+      receipt_id: receiptId,
     });
     setExpenseSaving(false);
-    if (error) { setExpenseError(error.message); alert("Expense error: " + error.message); return; }
+    if (error) {
+      // Keep the receipt if the expense insert fails, so the uploaded image is not lost.
+      setExpenseError("Expense wasn't saved. " + error.message);
+      return;
+    }
+    setReceiptFile(null);
     setForm({});
     await refreshExpenses(householdId);
+    if (receiptId) await refreshReceipts(householdId);
   };
 
   const deleteExpense = async (id) => {
@@ -935,12 +962,7 @@ function App() {
     />
   );
   const btn = (label, fn) => <button onClick={fn}>{label}</button>;
-  const heading = (name, desc) => (
-    <div className="heading">
-      <h2>{name}</h2>
-      <p>{desc}</p>
-    </div>
-  );
+  const heading = (name) => <div className="heading"><h2>{name}</h2></div>;
   const tile = (name, value, sub) => (
     <div className="tile">
       <small>{name}</small>
@@ -1076,15 +1098,15 @@ function App() {
         <nav aria-label="Feature navigation">{sections.map(([name, Icon]) => <button className={tab === name ? "active" : ""} onClick={()=>goTab(name)} key={name}><Icon size={19}/>{name}{badgeCount(name)>0&&<b className="nav-badge">{badgeCount(name)}</b>}</button>)}</nav>
         <p className="asidefoot">Made for our little home ♡</p>
       </aside>
-      <main>
-        <header className="os-topbar">
+      <main className={tab === "OurChat" ? "main-chat" : ""}>
+        {tab !== "OurChat" && <header className="os-topbar">
           <button aria-label="Toggle feature menu" aria-expanded={menu} className="mobilemenu ghost" onClick={()=>setMenu(!menu)}><Menu /></button>
           <span className="os-top-title">⌂ OurSpace ♡</span>
-          <div className="v12-actions"><button className="ghost" aria-label="Quick Add" onClick={()=>setQuickAdd(true)}><Plus size={20}/></button><button className="ghost header-updates" aria-label={`Updates, ${notifications.unread.length} unread`} onClick={()=>goTab("Updates")}><Bell size={20}/>{notifications.unread.length>0&&<b className="nav-badge">{notifications.unread.length}</b>}</button><button className="avatar" onClick={()=>goTab("Profile")}>Our Home ♡</button></div>
-        </header>
-        <div className="content">
+          <div className="v12-actions"><button className="ghost header-updates" aria-label={`Updates, ${notifications.unread.length} unread`} onClick={()=>goTab("Updates")}><Bell size={20}/>{notifications.unread.length>0&&<b className="nav-badge">{notifications.unread.length}</b>}</button><button className="avatar" onClick={()=>goTab("Profile")}>Our Home ♡</button></div>
+        </header>}
+        <div className={tab === "OurChat" ? "content content-chat" : "content"}>
           {tab === "Dashboard" && <section className="os-home v12-dashboard">
-            <div className="dashboard-welcome"><div><span className="eyebrow">{new Date(clock).toLocaleDateString('en-MY',{weekday:'long',day:'numeric',month:'long'})}</span><h1>Good {new Date(clock).getHours()<12?'morning':new Date(clock).getHours()<18?'afternoon':'evening'}, home.</h1><p>A little space for everything we share.</p></div><span className="home-illustration" aria-hidden="true">⌂</span></div>
+            <div className="dashboard-welcome"><div><span className="eyebrow">{new Date(clock).toLocaleDateString('en-MY',{weekday:'long',day:'numeric',month:'long'})}</span><h1>Good {new Date(clock).getHours()<12?'morning':new Date(clock).getHours()<18?'afternoon':'evening'}, home.</h1></div><span className="home-illustration" aria-hidden="true">⌂</span></div>
             {!householdId && <div className="panel"><h3>Let’s find your home</h3><p>{chatError || 'Loading your household…'}</p><button onClick={async()=>{if(await createHousehold())window.location.reload();}}>Create Our Home</button></div>}
             <div className="dashboard-grid">
               <section className="panel dashboard-events"><div className="v12-section-head"><h3><CalendarDays size={18}/> Today, together</h3><button className="ghost" onClick={()=>{setCalendarDate(today);setCalendarMonth(currentMonth);goTab('OurCalendar');}}>Calendar →</button></div>
@@ -1232,63 +1254,11 @@ function App() {
               ))}
             </>
           )}
-          {tab === "Receipts" && (
-            <>
-              {heading("Receipt Vault", "Save photos and receipt breakdowns, synced across devices.")}
-              <div className="panel receipt-upload-panel">
-                <h3>Add receipt</h3>
-                <div className="form receipt-form">
-                  {field("store", "Shop name")}
-                  {field("date", "Purchase date", "date")}
-                  {field("total", "Total (RM)", "number")}
-                  <textarea placeholder={"Items (one per line):\nAyam | 15.90\nTelur | 13.50"}
-                    value={form.items || ""}
-                    onChange={(e) => setForm((f) => ({ ...f, items: e.target.value }))} />
-                  <label className="receipt-file-field">
-                    <span>Receipt photo (optional, max 5 MB)</span>
-                    <input type="file" accept="image/*" capture="environment"
-                      onChange={(e) => setReceiptFile(e.target.files?.[0] || null)} />
-                    {receiptFile && <small className="receipt-file-name">{receiptFile.name}</small>}
-                  </label>
-                  <label><input type="checkbox" checked={!!form.createExpense}
-                    onChange={(e) => setForm((f) => ({ ...f, createExpense: e.target.checked }))} />
-                    Also add to Expenses</label>
-                  <button disabled={receiptSaving || !householdId} onClick={addReceipt}>
-                    {receiptSaving ? "Saving..." : "Save receipt"}
-                  </button>
-                </div>
-                <p className="muted">Receipt images are stored privately. Item breakdown is entered manually; OCR isn't enabled yet.</p>
-              </div>
-              {receiptError && <p className="muted">Receipt error: {receiptError}</p>}
-              {receiptLoading && <p className="muted">Loading receipts...</p>}
-              <div className="stack">
-                {!receiptLoading && !receiptError && receipts.length === 0 && <p className="muted">No receipts yet.</p>}
-                {receipts.map((x) => (
-                  <div className="item" key={x.id}>
-                    <div className="grow">
-                      <b>{x.merchant || "Unknown shop"} · {fmt(x.total)}</b>
-                      <small>{x.purchased_on || "No date"}</small>
-                      {x.image_path && receiptUrls[x.image_path] &&
-                        <a href={receiptUrls[x.image_path]} target="_blank" rel="noreferrer">
-                          <img src={receiptUrls[x.image_path]} alt={`Receipt from ${x.merchant || "shop"}`}
-                            style={{ maxWidth: 180, maxHeight: 220, objectFit: "contain", borderRadius: 10, marginTop: 8 }} />
-                        </a>}
-                      {Array.isArray(x.items) && x.items.length > 0 && <details>
-                        <summary>View item breakdown</summary>
-                        {x.items.map((v, i) => <p key={i}>{v.name} — {fmt(v.amount)}</p>)}
-                      </details>}
-                    </div>
-                    <button className="ghost" title="Delete" onClick={() => deleteReceipt(x)}><Trash2 size={16} /></button>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
           {tab === "Expenses" && (
             <>
               {heading("Expenses", "Track household spending, synced with Supabase.")}
-              <div className="panel form">
-                {field("name", "Expense description")}
+              <div className="panel form expense-entry-form">
+                {field("name", "Expense name")}
                 {field("amount", "Amount (RM)", "number")}
                 {field("spent_on", "Expense date", "date")}
                 <select value={form.category || "Other"}
@@ -1300,8 +1270,13 @@ function App() {
                   <option value="Shared">Shared / not specified</option>
                   <option value="Me">Paid by me</option>
                 </select>
+                <label className="receipt-file-field expense-receipt-field">
+                  <span>Receipt (optional, max 5 MB)</span>
+                  <input type="file" accept="image/*" onChange={e=>setReceiptFile(e.target.files?.[0] || null)} />
+                  {receiptFile && <small className="receipt-file-name">{receiptFile.name}</small>}
+                </label>
                 <button onClick={addExpense} disabled={expenseSaving || !householdId}>
-                  {expenseSaving ? "Saving..." : "Add expense"}
+                  {expenseSaving ? "Saving..." : "Save"}
                 </button>
               </div>
               {expenseError && <p className="muted">Expense error: {expenseError}</p>}
@@ -1309,6 +1284,10 @@ function App() {
               <label className="os-field">Spending month<input type="month" value={expenseMonth} onChange={e=>setExpenseMonth(e.target.value)} /></label>
               {tile("Monthly spending", fmt(monthlySpending(expenses,receipts,expenseMonth)), "Includes unlinked receipts once")}
               {tile("Total logged", fmt(expenseTotal), "Expenses across all months; excludes unlinked receipts")}
+              {receipts.some(r=>!expenses.some(e=>e.receipt_id===r.id)) && <details className="panel legacy-receipts">
+                <summary>Previous receipts ({receipts.filter(r=>!expenses.some(e=>e.receipt_id===r.id)).length})</summary>
+                {receipts.filter(r=>!expenses.some(e=>e.receipt_id===r.id)).map(r=><div className="item" key={r.id}><div className="grow"><b>{r.merchant} · {fmt(r.total)}</b><small>{r.purchased_on}</small>{r.image_path&&receiptUrls[r.image_path]&&<a className="expense-receipt-link" href={receiptUrls[r.image_path]} target="_blank" rel="noreferrer">View receipt</a>}</div></div>)}
+              </details>}
               <div className="stack">
                 {!expenseLoading && !expenseError && expenses.length === 0 &&
                   <p className="muted">No expenses yet.</p>}
@@ -1316,7 +1295,8 @@ function App() {
                   <div className="item" key={x.id}>
                     <div className="grow">
                       <b>{x.description} · {fmt(x.amount)}</b>
-                      <small>{x.spent_on} · {x.category} · {x.paid_by ? (x.paid_by === currentUserId ? "Paid by you" : "Paid by partner") : "Shared / not specified"}</small>
+                      <small>{x.spent_on} · {x.category} · {x.paid_by ? (x.paid_by === currentUserId ? "You" : "Partner") : "Shared"}</small>
+                      {x.receipt_id && (()=>{const receipt=receipts.find(r=>r.id===x.receipt_id);return receipt?.image_path && receiptUrls[receipt.image_path] ? <a className="expense-receipt-link" href={receiptUrls[receipt.image_path]} target="_blank" rel="noreferrer">View receipt</a> : null;})()}
                     </div>
                     <button className="ghost" title="Delete" onClick={() => deleteExpense(x.id)}>
                       <Trash2 size={16} />
@@ -1346,7 +1326,6 @@ function App() {
           </>}
           {tab === "OurChat" && (
             <>
-              {heading("OurChat ♡", "A little corner for the two of you.")}
               <div className="chat-shell">
                 <div className="chat-top">
                   <div className="chat-icon">
@@ -1354,7 +1333,7 @@ function App() {
                   </div>
                   <div>
                     <b>Our household</b>
-                    <small>Private household conversation · Supabase</small>
+
                   </div>
                 </div>
                 <label className="os-field chat-search">Search messages<input type="search" value={chatSearch} onChange={e=>setChatSearch(e.target.value)} placeholder="Find a conversation…" /></label>
@@ -1364,11 +1343,7 @@ function App() {
                   {!chatLoading && !chatError && chatMessages.length === 0 && (
                     <div className="chat-empty">
                       <MessageCircle size={34} />
-                      <h3>Your little chat starts here ♡</h3>
-                      <p>
-                        Send a message, pin it, or turn it into a grocery item
-                        or task.
-                      </p>
+                      <h3>No messages yet</h3>
                     </div>
                   )}
                   {chatMessages.filter(msg => msg.text.toLowerCase().includes(chatSearch.toLowerCase())).map((msg) => (
@@ -1446,9 +1421,7 @@ function App() {
                       <Send size={18} />
                     </button>
                   </form>
-                  <p className="muted">
-                    Private household conversation. Reply, pin, or turn a message into a shared task.
-                  </p>
+
                 </div>
               </div>
             </>
@@ -1546,11 +1519,9 @@ function App() {
             {extraModal==='wish'&&<>{extraField('title','Item name')}{extraField('price','Price (RM)','number')}<label className="os-field"><span>Category</span><select value={extraDraft.category||'Home'} onChange={e=>setExtraDraft(v=>({...v,category:e.target.value}))}>{['Home','Travel','Gift'].map(x=><option key={x}>{x}</option>)}</select></label>{extraField('url','Link (optional)','url')}</>}
             {extraModal==='love'&&<><label className="os-field"><span>Your note</span><textarea required maxLength={500} value={extraDraft.note||''} onChange={e=>setExtraDraft(v=>({...v,note:e.target.value}))} placeholder="Thank you for always being there for me. ♡"/></label>{extraField('open_date','Open on a specific date (optional)','date')}</>}
             <div className="os-modal-actions"><button type="button" className="os-cancel" onClick={()=>setExtraModal('')}>Cancel</button><button type="submit" disabled={calendarSaving||extraBusy}>{(calendarSaving||extraBusy) ? "Saving..." : "Save ♡"}</button></div></form></div></div>}
-          <footer>
-            OurSpace v1.2 · A little space for life together
-          </footer>
+          {tab !== "OurChat" && <footer>OurSpace v1.2</footer>}
         </div>
-        <nav className="os-bottom-nav" aria-label="Mobile navigation">{[["Dashboard",House,"Home"],["OurChat",MessageCircle,"Chat"],["Quick Add",Plus,"Quick Add"],["Updates",Bell,"Updates"],["Profile",UserRound,"Profile"]].map(([name,Icon,label])=><button key={name} aria-label={label} aria-current={tab===name?'page':undefined} className={tab===name?'active':''} onClick={()=>name==='Quick Add'?setQuickAdd(true):goTab(name)}><Icon size={21}/><span>{label}</span>{name==='Updates'&&notifications.unread.length>0&&<b className="nav-badge">{notifications.unread.length}</b>}</button>)}</nav>
+        {tab !== "OurChat" && <nav className="os-bottom-nav" aria-label="Mobile navigation">{[["Dashboard",House,"Home"],["OurChat",MessageCircle,"Chat"],["Quick Add",Plus,"Add"],["Expenses",Wallet,"Expenses"],["Profile",UserRound,"Profile"]].map(([name,Icon,label])=><button key={name} aria-label={label} aria-current={tab===name?'page':undefined} className={tab===name?'active':''} onClick={()=>name==='Quick Add'?setQuickAdd(true):goTab(name)}><Icon size={21}/><span>{label}</span>{name==='Updates'&&notifications.unread.length>0&&<b className="nav-badge">{notifications.unread.length}</b>}</button>)}</nav>}
       </main>
     </div>
   );
