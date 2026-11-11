@@ -25,6 +25,8 @@ import {
   ChevronRight,
   MessageCircle,
   Send,
+  Search,
+  Smile,
   CornerUpLeft,
   Pin,
   Heart,
@@ -98,6 +100,8 @@ function App() {
   const [inventory, setInventory] = useState([]);
   const [quickAdd, setQuickAdd] = useState(false);
   const [chatSearch, setChatSearch] = useState("");
+  const [chatSearchOpen, setChatSearchOpen] = useState(false);
+  const [chatToolsOpen, setChatToolsOpen] = useState(false);
   const [todoFilter, setTodoFilter] = useState("All");
   const [expenseMonth, setExpenseMonth] = useState(localDate().slice(0,7));
   const [groceryFilter, setGroceryFilter] = useState("All");
@@ -1327,16 +1331,13 @@ function App() {
           {tab === "OurChat" && (
             <>
               <div className="chat-shell">
-                <div className="chat-top">
-                  <div className="chat-icon">
-                    <Heart size={19} />
-                  </div>
-                  <div>
-                    <b>Our household</b>
-
-                  </div>
+                <div className="chat-top chat-top-v12">
+                  <button type="button" className="ghost chat-back" aria-label="Back to Home" onClick={()=>goTab("Dashboard")}><ArrowLeft size={22}/></button>
+                  <div className="chat-icon"><Heart size={20}/></div>
+                  <div className="chat-identity"><b>OurChat</b><small>Our household</small></div>
+                  <button type="button" className="ghost chat-search-button" aria-label="Search messages" aria-expanded={chatSearchOpen} onClick={()=>{setChatSearchOpen(v=>!v);setChatSearch("");}}><Search size={21}/></button>
                 </div>
-                <label className="os-field chat-search">Search messages<input type="search" value={chatSearch} onChange={e=>setChatSearch(e.target.value)} placeholder="Find a conversation…" /></label>
+                {chatSearchOpen && <label className="os-field chat-search"><input autoFocus type="search" value={chatSearch} onChange={e=>setChatSearch(e.target.value)} placeholder="Search messages" aria-label="Search messages" /></label>}
                 <div className="chat-messages">
                   {chatLoading && <p className="muted">Loading messages...</p>}
                   {chatError && <p className="muted">Chat error: {chatError}</p>}
@@ -1359,8 +1360,8 @@ function App() {
                           <div className="chat-quoted">↳ {msg.reply}</div>
                         )}
                         <div>{msg.text}</div>
-                        <small>
-                          {msg.who} · {msg.time}
+                        <small className="chat-meta">
+                          {msg.senderId !== currentUserId && <span>{msg.who} · </span>}{msg.time}
                           {msg.pinned ? " · 📌" : ""}
                         </small>
                       </div>
@@ -1408,16 +1409,23 @@ function App() {
                       </button>
                     </div>
                   )}
+                  {chatToolsOpen && <div className="chat-toolbox">
+                    <button type="button" onClick={()=>{setChatToolsOpen(false);goTab("Grocery");}}><ShoppingBasket size={17}/> Grocery</button>
+                    <button type="button" onClick={()=>{setChatToolsOpen(false);goTab("To-do");}}><ListTodo size={17}/> To-do</button>
+                    <button type="button" onClick={()=>{setChatToolsOpen(false);goTab("OurCalendar");}}><CalendarDays size={17}/> Calendar</button>
+                  </div>}
                   <form onSubmit={(e) => {
                     e.preventDefault();
                     sendChatMessage();
                   }}>
+                    <button type="button" className="chat-compose-tool" aria-label="More options" aria-expanded={chatToolsOpen} onClick={()=>setChatToolsOpen(v=>!v)}><Plus size={22}/></button>
                     <input
                       value={chatText}
                       onChange={(e) => setChatText(e.target.value)}
                       placeholder="Type a message..."
                     />
-                    <button type="submit" aria-label="Send message" disabled={chatSending || !householdId}>
+                    <button type="button" className="chat-compose-emoji" aria-label="Add heart emoji" onClick={()=>setChatText(v=>v+"♡")}><Smile size={20}/></button>
+                    <button type="submit" aria-label="Send message" disabled={chatSending || !householdId || !chatText.trim()}>
                       <Send size={18} />
                     </button>
                   </form>
