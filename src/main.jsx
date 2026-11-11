@@ -3,7 +3,7 @@ import { NotificationCentre, Profile, Pantry } from "./V12Panels";
 import { localDate, monthlySpending, missingIngredients } from "./v12-utils";
 import AuthGate from "./AuthGate";
 import { supabase } from "./supabase";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import {
   House,
@@ -159,6 +159,7 @@ function App() {
   const [householdId, setHouseholdId] = useState(null);
   const [currentUserId, setCurrentUserId] = useState(null);
   const [chatMessages, setChatMessages] = useState([]);
+  const chatMessagesRef = useRef(null);
   const [chatLoading, setChatLoading] = useState(true);
   const [chatError, setChatError] = useState("");
   const [chatSending, setChatSending] = useState(false);
@@ -258,7 +259,14 @@ function App() {
     };
   }, [householdId, currentUserId]);
 
-  const sendChatMessage = async () => {
+  // Keep the latest message visible whenever Chat opens or a message arrives.
+  useLayoutEffect(() => {
+    if (tab !== "OurChat") return;
+    const el = chatMessagesRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [tab, chatMessages, chatSearchOpen]);
+
+    const sendChatMessage = async () => {
     if (!chatText.trim() || chatSending) return;
     if (!householdId || !currentUserId) {
       alert("Household not ready. Check OurChat status.");
@@ -1347,7 +1355,7 @@ function App() {
                   <button type="button" className="ghost chat-search-button" aria-label="Search messages" aria-expanded={chatSearchOpen} onClick={()=>{setChatSearchOpen(v=>!v);setChatSearch("");}}><Search size={21}/></button>
                 </div>
                 {chatSearchOpen && <label className="os-field chat-search"><input autoFocus type="search" value={chatSearch} onChange={e=>setChatSearch(e.target.value)} placeholder="Search messages" aria-label="Search messages" /></label>}
-                <div className="chat-messages">
+                <div className="chat-messages" ref={chatMessagesRef}>
                   {chatLoading && <p className="muted">Loading messages...</p>}
                   {chatError && <p className="muted">Chat error: {chatError}</p>}
                   {!chatLoading && !chatError && chatMessages.length === 0 && (
