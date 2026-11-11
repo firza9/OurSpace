@@ -923,7 +923,7 @@ function App() {
   const extraField = (key, label, type="text") => <label className="os-field"><span>{label}</span><input type={type} value={extraDraft[key] || ""} onChange={e=>setExtraDraft(v=>({...v,[key]:e.target.value}))} /></label>;
   const openExtra = type => {setExtraDraft({});setExtraModal(type);};
   const goTab = (name, target = null) => {
-    if (!sections.some(([section]) => section === name)) return;
+    if (name !== "Updates" && !sections.some(([section]) => section === name)) return;
     setTab(name);setMenu(false);setForm({});setSelectedRecipe(null);
     const url = new URL(window.location.href); url.searchParams.set("tab", name);
     if (target) url.searchParams.set("item", target); else url.searchParams.delete("item");
@@ -1279,20 +1279,20 @@ function App() {
             <>
               {heading("Expenses", "Track household spending, synced with Supabase.")}
               <div className="panel form expense-entry-form">
-                {field("name", "Expense name")}
-                {field("amount", "Amount (RM)", "number")}
-                {field("spent_on", "Expense date", "date")}
-                <select value={form.category || "Other"}
+                <label className="expense-form-field"><span>Name</span>{field("name", "Expense name")}</label>
+                <label className="expense-form-field"><span>Amount (RM)</span>{field("amount", "0.00", "number")}</label>
+                <label className="expense-form-field"><span>Date</span>{field("spent_on", "Date", "date")}</label>
+                <label className="expense-form-field"><span>Category</span><select aria-label="Category" value={form.category || "Other"}
                   onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}>
                   {["Other", "Food", "Groceries", "Transport", "Bills", "Home", "Shopping", "Health"].map((c) => <option key={c}>{c}</option>)}
-                </select>
-                <select value={form.payer || "Shared"}
+                </select></label>
+                <label className="expense-form-field"><span>Paid by</span><select aria-label="Paid by" value={form.payer || "Shared"}
                   onChange={(e) => setForm((f) => ({ ...f, payer: e.target.value }))}>
-                  <option value="Shared">Shared / not specified</option>
-                  <option value="Me">Paid by me</option>
-                </select>
+                  <option value="Shared">Shared</option>
+                  <option value="Me">Me</option>
+                </select></label>
                 <label className="receipt-file-field expense-receipt-field">
-                  <span>Receipt (optional, max 5 MB)</span>
+                  <span>Receipt <small>(optional · max 5 MB)</small></span>
                   <input type="file" accept="image/*" onChange={e=>setReceiptFile(e.target.files?.[0] || null)} />
                   {receiptFile && <small className="receipt-file-name">{receiptFile.name}</small>}
                 </label>
@@ -1302,9 +1302,13 @@ function App() {
               </div>
               {expenseError && <p className="muted">Expense error: {expenseError}</p>}
               {expenseLoading && <p className="muted">Loading expenses...</p>}
-              <label className="os-field">Spending month<input type="month" value={expenseMonth} onChange={e=>setExpenseMonth(e.target.value)} /></label>
-              {tile("Monthly spending", fmt(monthlySpending(expenses,receipts,expenseMonth)), "Includes unlinked receipts once")}
-              {tile("Total logged", fmt(expenseTotal), "Expenses across all months; excludes unlinked receipts")}
+              <div className="expense-overview">
+                <label className="os-field expense-month-picker"><span>Month</span><input type="month" value={expenseMonth} onChange={e=>setExpenseMonth(e.target.value)} /></label>
+                <div className="expense-summary">
+                  <div className="expense-summary-card"><small>This month</small><strong>{fmt(monthlySpending(expenses,receipts,expenseMonth))}</strong></div>
+                  <div className="expense-summary-card"><small>All expenses</small><strong>{fmt(expenseTotal)}</strong></div>
+                </div>
+              </div>
               {receipts.some(r=>!expenses.some(e=>e.receipt_id===r.id)) && <details className="panel legacy-receipts">
                 <summary>Previous receipts ({receipts.filter(r=>!expenses.some(e=>e.receipt_id===r.id)).length})</summary>
                 {receipts.filter(r=>!expenses.some(e=>e.receipt_id===r.id)).map(r=><div className="item" key={r.id}><div className="grow"><b>{r.merchant} · {fmt(r.total)}</b><small>{r.purchased_on}</small>{r.image_path&&receiptUrls[r.image_path]&&<a className="expense-receipt-link" href={receiptUrls[r.image_path]} target="_blank" rel="noreferrer">View receipt</a>}</div></div>)}
