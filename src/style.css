@@ -146,3 +146,15 @@ nav button.active{color:var(--on-mocha)}
 .chat-toolbox{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
 .chat-toolbox button{display:flex;align-items:center;gap:6px;padding:8px 11px;background:var(--soft,#f1e5d9);color:var(--ink,#241d19);font-size:12px}
 @media(max-width:600px){.content-chat .chat-top-v12{padding:10px 12px}.content-chat .chat-messages{padding:14px 12px}.content-chat .chat-compose{padding:10px 10px max(12px,env(safe-area-inset-bottom))}.content-chat .chat-row .bubble{max-width:88%}.content-chat .chat-compose form{gap:5px}}
+
+/* Chat viewport lock: only message history scrolls, not the page */
+html.os-chat-active,body.os-chat-active,#root:has(.app-chat){height:100%;overflow:hidden;overscroll-behavior:none}
+.app.app-chat{height:100dvh;min-height:0;max-height:100dvh;overflow:hidden;align-items:stretch}
+.app-chat>aside{height:100%;min-height:0;overflow-y:auto}
+.app-chat>main.main-chat{height:100%;min-height:0;min-width:0;overflow:hidden;display:flex;flex-direction:column}
+.app-chat .content.content-chat{flex:1 1 auto;min-height:0;max-height:100%;overflow:hidden;display:flex;flex-direction:column}
+.app-chat .content-chat .chat-shell{flex:1 1 auto;height:auto;min-height:0;max-height:100%;overflow:hidden;display:flex;flex-direction:column}
+.app-chat .content-chat .chat-top,.app-chat .content-chat .chat-search,.app-chat .content-chat .chat-compose{flex:0 0 auto}
+.app-chat .content-chat .chat-messages{flex:1 1 0;min-height:0;max-height:none;overflow-x:hidden;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain}
+.app-chat .content-chat .chat-compose{position:relative;bottom:auto}
+@media(max-width:600px){.app.app-chat{height:100dvh}.app-chat .content-chat .chat-shell{height:100%}}
