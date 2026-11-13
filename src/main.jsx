@@ -1122,8 +1122,8 @@ function App() {
       <main className={tab === "OurChat" ? "main-chat" : ""}>
         {tab !== "OurChat" && <header className="os-topbar">
           <button aria-label="Toggle feature menu" aria-expanded={menu} className="mobilemenu ghost" onClick={()=>setMenu(!menu)}><Menu /></button>
-          <span className="os-top-title">⌂ OurSpace ♡</span>
-          <div className="v12-actions"><button className="ghost header-updates" aria-label={`Updates, ${notifications.unread.length} unread`} onClick={()=>goTab("Updates")}><Bell size={20}/>{notifications.unread.length>0&&<b className="nav-badge">{notifications.unread.length}</b>}</button><button className="avatar" onClick={()=>goTab("Profile")}>Our Home ♡</button></div>
+          <span className="os-top-title"><House size={16} aria-hidden="true" /> OurSpace ♡</span>
+          <div className="v12-actions"><button className="ghost header-updates" aria-label={`Notifications, ${notifications.unread.length} unread`} onClick={()=>goTab("Updates")}><Bell size={21}/>{notifications.unread.length>0&&<b className="nav-badge">{notifications.unread.length}</b>}</button></div>
         </header>}
         <div className={tab === "OurChat" ? "content content-chat" : "content"}>
           {tab === "Dashboard" && <section className="os-home v12-dashboard">
@@ -1550,7 +1550,7 @@ function App() {
             <div className="os-modal-actions"><button type="button" className="os-cancel" onClick={()=>setExtraModal('')}>Cancel</button><button type="submit" disabled={calendarSaving||extraBusy}>{(calendarSaving||extraBusy) ? "Saving..." : "Save ♡"}</button></div></form></div></div>}
           {tab !== "OurChat" && <footer>OurSpace v1.2</footer>}
         </div>
-        {tab !== "OurChat" && <nav className="os-bottom-nav" aria-label="Mobile navigation">{[["Dashboard",House,"Home"],["OurChat",MessageCircle,"Chat"],["Quick Add",Plus,"Add"],["Expenses",Wallet,"Expenses"],["Profile",UserRound,"Profile"]].map(([name,Icon,label])=><button key={name} aria-label={label} aria-current={tab===name?'page':undefined} className={tab===name?'active':''} onClick={()=>name==='Quick Add'?setQuickAdd(true):goTab(name)}><Icon size={21}/><span>{label}</span>{name==='Updates'&&notifications.unread.length>0&&<b className="nav-badge">{notifications.unread.length}</b>}</button>)}</nav>}
+        {tab !== "OurChat" && <nav className="os-bottom-nav" aria-label="Mobile navigation">{[["Dashboard",House,"Home"],["OurChat",MessageCircle,"Chat"],["Quick Add",Plus,"Add"],["Expenses",Wallet,"Expenses"],["Profile",UserRound,"Profile"]].map(([name,Icon,label])=><button key={name} aria-label={label} aria-current={tab===name?'page':undefined} className={tab===name?'active':''} onClick={()=>name==='Quick Add'?setQuickAdd(true):goTab(name)}><Icon size={name==='Quick Add'?26:21}/>{name!=='Quick Add'&&<span>{label}</span>}</button>)}</nav>}
       </main>
     </div>
   );
