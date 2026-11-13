@@ -1368,9 +1368,14 @@ function App() {
                       <h3>No messages yet</h3>
                     </div>
                   )}
-                  {chatMessages.filter(msg => msg.text.toLowerCase().includes(chatSearch.toLowerCase())).map((msg) => (
+                  {chatMessages.filter(msg => msg.text.toLowerCase().includes(chatSearch.toLowerCase())).map((msg, index, visible) => (
+                    <React.Fragment key={msg.id}>
+                      {(index === 0 || new Date(visible[index - 1].createdAt).toDateString() !== new Date(msg.createdAt).toDateString()) && (
+                        <div className="chat-date-divider" role="separator">
+                          <span>{new Date(msg.createdAt).toLocaleDateString("en-MY", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}</span>
+                        </div>
+                      )}
                     <div
-                      key={msg.id}
                       id={`item-${msg.id}`}
                       className={
                         "chat-row " + (msg.senderId === currentUserId ? "mine" : "theirs")
@@ -1380,11 +1385,11 @@ function App() {
                         {msg.reply && (
                           <div className="chat-quoted">↳ {msg.reply}</div>
                         )}
-                        <div>{msg.text}</div>
-                        <small className="chat-meta">
-                          {msg.senderId !== currentUserId && <span>{msg.who} · </span>}{msg.time}
-                          {msg.pinned ? " · 📌" : ""}
-                        </small>
+                        <div className="chat-message-text">{msg.text}</div>
+                        <div className="chat-meta">
+                          {msg.pinned && <Pin size={11} aria-label="Pinned" />}
+                          <time dateTime={msg.createdAt}>{msg.time}</time>
+                        </div>
                       </div>
                       <div className="chat-actions">
                         <button title="Reply" onClick={() => setReplyTo(msg)}>
@@ -1416,6 +1421,7 @@ function App() {
                         </button>
                       </div>
                     </div>
+                    </React.Fragment>
                   ))}
                 </div>
                 <div className="chat-compose">
